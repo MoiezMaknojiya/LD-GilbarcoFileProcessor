@@ -17,7 +17,7 @@ Yeh file har review point ka masla, discussion, faisla aur status rakhti hai. Ha
 | 1 | Upload sirf nayi file pe trigger hota tha | Bara | DONE | 04597f3 |
 | 2 | Logout pe saari pending transactions delete | Bara | CHOR DO | - |
 | 3 | POS folder ki originals kabhi delete nahi, restart pe sab dobara process | Bara | CHOR DO (dekho point 16) | - |
-| 4 | Watcher pehli baar fail ho to service hamesha phansi | Bara | PENDING | |
+| 4 | Watcher pehli baar fail ho to service hamesha phansi | Bara | DONE | 27b1499 |
 | 5 | Auto-login token verify nahi karta | Bara | CHOR DO (token kabhi expire nahi hota) | - |
 | 6 | DeptId 0 ka risk | Bara | PENDING | |
 | 7 | Network-error break wala code dead tha | Darmiyana | DONE (point 1 ke saath) | 04597f3 |
@@ -72,7 +72,25 @@ Yeh file har review point ka masla, discussion, faisla aur status rakhti hai. Ha
 
 **Hissa (c), Modisoft delete ki race: CHOR DO, evidence ki bunyad pe.** Modisoft files delete karta hai, lekin foran nahi: agar foran karta to restart pe folder khali milta aur duplicates kabhi na jaate. Duplicates jaate hain, matlab files ghanton tak padi rehti hain. To lock-wait ke dauran file gayab hone ka chance sirf theoretical hai. Nishani: agar kabhi service log mein "File no longer exists before copy" dikhe to yahi race hai, tab dobara dekhenge.
 
-### 4. Watcher pehli baar fail ho to service hamesha phansi — PENDING
+### 4. Watcher pehli baar fail ho to service hamesha phansi — DONE (27b1499)
+
+**Faisla (Moiez, 2026-10-06):** "Kuch bhi ho baar baar retry pe jaye, service break nahi honi chahiye." Fix step 5 ke saath kiya.
+
+**Kya badla (`LdFileProcessor/FileMonitorService.cs`):**
+- Line 225 `TrySetupFileWatcher()`: bool deta hai, fail pe `_watcher = null`, kabhi throw nahi karta. Watcher pehle `_watcher` mein rakha jaata hai phir `EnableRaisingEvents = true` (wahi line jo share pe toot-ti hai), taake foran aane wala Error event sahi instance dekhe.
+- Line 106: start pe watcher na bane to 30 second (`WatcherRetryDelay`, line 50) ruk ke `continue`, path dobara padho, dobara try. Infinite sleep khatam.
+- Line 382 `OnWatcherError`: sirf tootay hue watcher ko null aur dispose karta hai. Purana alag 30-second `Task.Run` retry loop aur `_watcherRestartCts` hata diye.
+- Line 296 `EnsureWatcherAliveAsync`: har minute wale loop se chalta hai. `_watcher == null` aur path accessible ho to watcher dobara banao, phir folder scan taake outage ki files uth jayein.
+- Line 421 `ScanFolderIfDueAsync` + line 445 `ScanFolderAsync(reason)`: step 5. Har 5 minute (`FolderScanInterval`, line 54) folder scan. Is run mein pehle se handle ki hui files (naam se, in-memory `_handledFiles`) skip, 10 second (`ScanSettleTime`, line 58) se taza files agle scan ke liye chhod do. Restart pe list khali, sab dobara process, pehle jaisa. `CopyExistingFilesAsync` isi mein merge ho gaya (startup, watcher recovery, periodic teeno isko call karte hain).
+- `_watcherLock`: watcher banane/dispose karne pe lock, kyunke loop thread aur watcher ka event thread dono haath lagate hain. `StopAsync` aur `Dispose` ab `DisposeWatcher()` use karte hain.
+
+**Ab behaviour:** watcher start pe na bane to har 30 second try. Beech mein mare (Error event) to max 1 minute mein wapas. Bina Error event ke chup chaap mare to max 5 minute mein scan files utha leta hai. Koi bhi exception loop ko nahi todti, sab methods apne andar catch karte hain. Service sirf tab rukti hai jab Moiez khud stop kare.
+
+**Log mein kya dikhega:** "File watcher could not be started. Retrying in 00:00:30", "File watcher is down and folder path is not accessible" (har minute jab tak path wapas na aaye), "Folder path is accessible again ... Restarting file watcher", "FOLDER SCAN (startup|watcher recovery|periodic) START". Periodic scan ko kuch na mile to chup.
+
+**Deploy:** service dobara publish aur restart zaroori. Saath mein `sc failure` wala recovery set kar lo (neeche).
+
+**Pehle ka analysis aur plan, reference ke liye:**
 
 **Masla:** `FileMonitorService.cs:85` `SetupFileWatcher()` exception khaa ke sirf log karta hai, return value nahi. Phir line 95 ka loop sirf uploads retry karta hai, watcher dobara nahi banata. Recovery sirf `OnWatcherError` pe hai, jo bina watcher ke aa hi nahi sakta. Matlab agar network share us ek lamhe mein gayab tha jab watcher ban raha tha, service restart tak koi file nahi uthegi.
 
@@ -204,3 +222,4 @@ Natija: start pe fail ho ya baad mein mare, dono case zyada se zyada 1 minute me
 |---|---|---|
 | 9b51aeb | 2026-10-06 | Initial commit, March 2026 production code |
 | 04597f3 | 2026-10-06 | Point 1 (+7): periodic upload retry, semaphore lock, break on first failure |
+| 27b1499 | 2026-10-06 | Point 4: TrySetupFileWatcher, keep-alive loop recreates watcher, 5-minute folder scan safety net |
