@@ -1,0 +1,5 @@
+<Solution>
+  <Project Path="ApiLibrary/ApiLibrary.csproj" />
+  <Project Path="LdFileProcessor/LdFileProcessor.csproj" />
+  <Project Path="LdPosService/LdPosService.csproj" />
+</Solution>
