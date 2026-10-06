@@ -30,8 +30,13 @@ namespace LdFileProcessor
         private string _folderPath = "";        // Folder path to monitor (from database)
         private User? _currentUser;             // Current logged-in user info (contains DeptId, StoreId, etc.)
 
-        private volatile bool _isUploading = false;                    // Flag: Is upload in progress? [volatile: accessed from multiple threads]
-        private CancellationTokenSource? _watcherRestartCts;           // Cancels stale watcher restart tasks on new errors
+        private readonly SemaphoreSlim _uploadLock = new SemaphoreSlim(1, 1);   // Guards uploads: only one upload pass runs at a time (file events + periodic retry)
+        private CancellationTokenSource? _watcherRestartCts;                     // Cancels stale watcher restart tasks on new errors
+
+        // How often pending (not yet uploaded) transactions are retried while the watcher is running.
+        // Covers two cases a file event alone cannot: a transaction saved while another upload pass was
+        // already running, and uploads that failed because the network or API was unavailable.
+        private static readonly TimeSpan UploadRetryInterval = TimeSpan.FromMinutes(1);
 
         public FileMonitorService(ILogger<FileMonitorService> logger, XmlJsonConverter xmlJsonConverter, FileUtilities fileUtilities, ApiServices apiService)
         {
@@ -82,20 +87,13 @@ namespace LdFileProcessor
                                 // Process any existing files in the folder
                                 await CopyExistingFilesAsync();
 
-                                // Keep monitoring and refreshing folder path every 30 seconds
+                                // Keep the service alive and retry pending uploads periodically.
+                                // (The old 30-second folder path refresh was removed on purpose; the desktop app
+                                // restarts the service when the folder changes.)
                                 while (!stoppingToken.IsCancellationRequested)
                                 {
-                                    //await Task.Delay(30000, stoppingToken);  // Wait 30 seconds
-                                    //await RefreshFolderPathAsync();           // Check if folder path changed
-                                    //// If folder path was cleared, stop monitoring
-                                    //if (string.IsNullOrEmpty(_folderPath))
-                                    //{
-                                    //    _logger.LogWarning("Folder path cleared. Stopping watcher and resuming path search.\n");
-                                    //    _watcher?.Dispose();
-                                    //    break;
-                                    //}
-
-                                    await Task.Delay(Timeout.Infinite, stoppingToken);
+                                    await Task.Delay(UploadRetryInterval, stoppingToken);
+                                    await RetryPendingUploadsAsync();
                                 }
                             }
                             else
@@ -551,20 +549,21 @@ namespace LdFileProcessor
 
         private async Task UploadUnprocessedTransactionsAsync(User currentUser)
         {
-            // Prevent overlapping uploads
-            if (_isUploading)
-            {
-                _logger.LogInformation("Upload already in progress. Skipping duplicate upload request.\n");
-                return; // Note: No separator needed here as no UPLOAD START was logged
-            }
-
             if (string.IsNullOrEmpty(currentUser.AccessToken))
             {
                 _logger.LogWarning("AccessToken is null or empty. Skipping upload.\n");
                 return;
             }
 
-            _isUploading = true;  // Set flag to indicate upload in progress
+            // Prevent overlapping uploads (a file event and the periodic retry can both land here).
+            // Wait(0) is an atomic try-acquire: it never blocks, and the check-and-take is a single
+            // step, so two callers can never both get through.
+            if (!_uploadLock.Wait(0))
+            {
+                _logger.LogInformation("Upload already in progress. Skipping duplicate upload request.\n");
+                return; // Note: No separator needed here as no UPLOAD START was logged
+            }
+
             try
             {
                 _logger.LogInformation("======================================== UPLOAD START ========================================");
@@ -609,37 +608,17 @@ namespace LdFileProcessor
                         }
                         else
                         {
-                            // Upload failed - leave in database, will retry later
-                            _logger.LogWarning("Failed to upload transaction {transId}. Will retry later.\n", transaction.TransId);
+                            // Upload failed (network down, timeout or server error). UploadJsonAsync never throws,
+                            // so this is the only place a failure shows up. Stop this pass here: trying the
+                            // remaining transactions would just repeat the same failure (and timeouts) for each
+                            // one. Everything still in the database is picked up by the periodic retry.
+                            _logger.LogWarning("Failed to upload transaction {transId}. Stopping this pass; will retry in {interval}.\n", transaction.TransId, UploadRetryInterval);
+                            break;
                         }
-                    }
-                    catch (HttpRequestException ex)
-                    {
-                        // Network error — no point trying remaining transactions if network is down
-                        _logger.LogWarning("Network error uploading transaction {transId}: {message}. Will retry when network is available.\n", transaction.TransId, ex.Message);
-                        break;
-                    }
-                    catch (TaskCanceledException ex)
-                    {
-                        // Request timeout (took longer than 30 seconds)
-                        _logger.LogWarning("Request timeout for transaction {transId}: {message}. Will retry later.\n", transaction.TransId, ex.Message);
-                        break;
-                    }
-                    catch (System.Net.Sockets.SocketException ex)
-                    {
-                        // Socket-level network error
-                        _logger.LogWarning("Socket error uploading transaction {transId}: {message}. Will retry when network is available.\n", transaction.TransId, ex.Message);
-                        break;
-                    }
-                    catch (System.ComponentModel.Win32Exception ex)
-                    {
-                        // Windows network error (ethernet disabled, adapter issues)
-                        _logger.LogWarning("Network interface error uploading transaction {transId}: {message}. Will retry when network is available.\n", transaction.TransId, ex.Message);
-                        break;
                     }
                     catch (Exception ex)
                     {
-                        // Unexpected per-transaction error - log but continue trying remaining transactions
+                        // Unexpected per-transaction error (e.g. database) - log but continue trying remaining transactions
                         _logger.LogError(ex, "Unexpected error uploading transaction {transId}: {message}.\n\n", transaction.TransId, ex.Message);
                     }
                 }
@@ -663,7 +642,35 @@ namespace LdFileProcessor
             }
             finally
             {
-                _isUploading = false;  // Always reset flag when done
+                _uploadLock.Release();  // Always release so the next upload pass can run
+            }
+        }
+
+        /// <summary>
+        /// Runs every UploadRetryInterval while the watcher is active. Uploads anything still pending in
+        /// the database: transactions saved while another upload pass was running, and uploads that failed
+        /// earlier because the network or API was down. Stays silent when there is nothing to do, so the
+        /// log does not fill up with empty UPLOAD START/END blocks every minute.
+        /// </summary>
+        private async Task RetryPendingUploadsAsync()
+        {
+            try
+            {
+                var user = _currentUser;
+                if (user == null)
+                    return;
+
+                int pending = _dbHelper.CountUnprocessedTransactions();
+                if (pending == 0)
+                    return;
+
+                _logger.LogInformation("Periodic retry: {count} pending transaction(s) found in database.\n", pending);
+                await UploadUnprocessedTransactionsAsync(user);
+            }
+            catch (Exception ex)
+            {
+                // Must never throw: an exception here would bubble up into ExecuteAsync and recreate the file watcher
+                _logger.LogError(ex, "Error in periodic upload retry.\n\n");
             }
         }
 

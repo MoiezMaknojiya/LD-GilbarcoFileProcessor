@@ -359,6 +359,27 @@ namespace ApiLibrary
             }
         }
 
+        public int CountUnprocessedTransactions()
+        {
+            try
+            {
+                using (var connection = GetConnection())
+                {
+                    connection.Open();
+                    string query = "SELECT COUNT(*) FROM Transactions WHERE IsProcessed = 0";
+
+                    using (var command = new SQLiteCommand(query, connection))
+                    {
+                        return Convert.ToInt32(command.ExecuteScalar());
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                throw new Exception($"Failed to count unprocessed transactions: {ex.Message}");
+            }
+        }
+
         public List<Transaction> GetUnprocessedTransactions()
         {
             var transactions = new List<Transaction>();
