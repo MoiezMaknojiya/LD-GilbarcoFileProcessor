@@ -16,7 +16,7 @@ Yeh file har review point ka masla, discussion, faisla aur status rakhti hai. Ha
 |---|---|---|---|---|
 | 1 | Upload sirf nayi file pe trigger hota tha | Bara | DONE | 04597f3 |
 | 2 | Logout pe saari pending transactions delete | Bara | CHOR DO | - |
-| 3 | POS folder ki originals kabhi delete nahi, restart pe sab dobara process | Bara | AADHA: delete CHOR DO, duplicate upload + Modisoft race PENDING | |
+| 3 | POS folder ki originals kabhi delete nahi, restart pe sab dobara process | Bara | CHOR DO (dekho point 16) | - |
 | 4 | Watcher pehli baar fail ho to service hamesha phansi | Bara | PENDING | |
 | 5 | Auto-login token verify nahi karta | Bara | PENDING | |
 | 6 | DeptId 0 ka risk | Bara | PENDING | |
@@ -29,6 +29,7 @@ Yeh file har review point ka masla, discussion, faisla aur status rakhti hai. Ha
 | 13 | UI freeze, WaitForStatus UI thread pe | Chhota | PENDING | |
 | 14 | UNC path pe sync Directory.Exists | Chhota | PENDING | |
 | 15 | Dead code aur faltu saaman | Chhota | PENDING | |
+| 16 | Server ka reject (4xx) aur network fail ek jaise treat; point 1 ke baad rejected row queue block kar sakti hai | Bara | PENDING | |
 
 ## Points tafseel se
 
@@ -49,6 +50,8 @@ Yeh file har review point ka masla, discussion, faisla aur status rakhti hai. Ha
 
 **Ab behaviour:** B wali stranded transaction max 1 minute late. Net wapas aaye to 1 minute ke andar sab pending nikal jaati hain. Net down aur 20 pending hon to pehli fail pe pass band, agle minute dobara.
 
+**Caveat:** "pehli fail pe break" tab galat hai jab server kisi row ko hamesha error status se reject kare, woh row baaki queue block kar degi. Dekho point 16.
+
 **Deploy:** Sirf code mein hai. Store machine pe service dobara publish aur restart zaroori.
 
 ### 2. Logout pe saari pending transactions delete — CHOR DO
@@ -63,12 +66,9 @@ Yeh file har review point ka masla, discussion, faisla aur status rakhti hai. Ha
 
 **Faisla (Moiez, 2026-10-06), delete wala hissa: CHOR DO.** Usi folder se ek aur software, Modisoft, bhi padhta hai aur wohi files delete karta hai. Hum delete karein to Modisoft padh nahi payega. Passport bhi har 7 din mein folder khud khali kar deta hai. To originals ko haath nahi lagana, yeh intended hai.
 
-**Abhi khula, hissa (b): restart pe duplicate upload.** Yeh delete se alag masla hai. Jab tak file folder mein hai (Modisoft ke delete tak, zyada se zyada 7 din), service restart ya network wapas aane pe woh file dobara DB mein jayegi aur dobara upload hogi, chahe pehle upload ho chuki ho. Browse Folder dabana bhi service restart hai.
-- Agar server `check-json` pe same TransactionID dobara aaye to reject karta hai: poora point CHOR DO.
-- Agar nahi: fix idea yeh hai ke upload success pe row delete na karein, `IsProcessed = 1` karein (column pehle se hai, kabhi use nahi hua) aur 14 din tak rakhein. Phir `INSERT OR IGNORE` purani TransId ko khud skip karega. Shart: TransactionID dono Passports mein unique ho. Agar dono registers same number de sakte hain to FileName pe dedupe karna padega.
-- Sawal: server dedupe karta hai? TransactionID dono Passports mein unique hai ya register wise repeat ho sakta hai?
+**Hissa (b), restart pe duplicate upload: CHOR DO (Moiez, 2026-10-06).** Service restart pe duplicates bhejti hai, yeh Moiez ko pata hai. Server `check-json` apne paas log rakhta hai aur same TransactionID dobara aaye to rok deta hai. To duplicate bhejna masla nahi. Is se ek alag baat nikli, dekho point 16: server duplicate ko HTTP 200 se rokta hai ya error status se, is pe depend karta hai ke point 1 ka "pehli fail pe break" us row pe phans to nahi jayega.
 
-**Abhi khula, hissa (c): Modisoft delete ki race.** Service file aane pe pehle lock check karti hai (35 second tak wait) phir copy. Agar Modisoft is dauran file delete kar de to `FileMonitorService.cs:264` "no longer exists" log kar ke chhod deta hai, aur yeh transaction kabhi upload nahi hoti kyunke file gayab hai, restart scan bhi nahi dekhega. Sawal: Modisoft file aane ke kitni der baad delete karta hai? Seconds, minutes, ya din ke end pe?
+**Hissa (c), Modisoft delete ki race: CHOR DO, evidence ki bunyad pe.** Modisoft files delete karta hai, lekin foran nahi: agar foran karta to restart pe folder khali milta aur duplicates kabhi na jaate. Duplicates jaate hain, matlab files ghanton tak padi rehti hain. To lock-wait ke dauran file gayab hone ka chance sirf theoretical hai. Nishani: agar kabhi service log mein "File no longer exists before copy" dikhe to yahi race hai, tab dobara dekhenge.
 
 ### 4. Watcher pehli baar fail ho to service hamesha phansi — PENDING
 
@@ -145,6 +145,16 @@ Yeh file har review point ka masla, discussion, faisla aur status rakhti hai. Ha
 - `Serilog.AspNetCore` jahan `Serilog.Extensions.Hosting` kaafi tha
 - Do alag ProgramData folders: publish `LotteryDisplayPOS`, DB/logs `LdPosService`
 
+### 16. Server ka reject aur network fail ek jaise treat hote hain — PENDING
+
+**Masla:** `ApiLibrary/ApiServices.cs` ka `UploadJsonAsync` sirf `IsSuccessStatusCode` dekhta hai aur bool deta hai, response body padhta hi nahi. Server agar duplicate ya galat data ko error status (400, 409, 422) se rokta hai to client usko network failure jaisa samajhta hai: row DB mein rehti hai aur baar baar retry hoti hai. Point 1 ke baad yeh zyada bura hai: upload pass pehli fail pe break hota hai, to agar list mein sab se pehli row server-rejected hai, uske peeche ki saari nayi transactions har minute block hongi jab tak logout na ho.
+
+**Agar server duplicate pe HTTP 200 deta hai** (body mein success 0 ya koi message): koi masla nahi, `IsSuccessStatusCode` true, row delete ho jaati hai. Tab yeh point CHOR DO.
+
+**Fix idea (dono case mein behtar):** `UploadJsonAsync` bool ki jagah teen outcome de: Success, Rejected (4xx, server ne samajh ke mana kiya), Failed (network, timeout, 5xx). Rejected pe status aur body log karo, row hatao, agli row pe chalo. Failed pe break aur agle minute retry. Response body log hone se duplicate ka message bhi log mein dikhega, abhi woh kahin nahi dikhta.
+
+**Sawal Moiez ke liye:** `check-json` duplicate TransactionID pe kya return karta hai, HTTP status aur body?
+
 ## Background facts
 
 - Store mein 2 Gilbarco Passport terminals. Ek waqt mein max 2 XML files.
@@ -152,8 +162,9 @@ Yeh file har review point ka masla, discussion, faisla aur status rakhti hai. Ha
 - Git: 2026-10-06 ko purana repo `POS-DesktopApp-C-` delete kar ke naya `LD-GilbarcoFileProcessor` banaya. `LdPosService` folder hi repo hai. `..\POS-DesktopApp-C` clone stale hai, wahan se push mat karo.
 - Publish: `FolderProfile.pubxml` → `C:\ProgramData\LotteryDisplayPOS\LdFileProcessor`, self-contained single-file win-x64. Yeh file gitignore mein hai (`*.pubxml`).
 - Runtime data: `C:\ProgramData\LdPosService\` mein `PosData.db`, `logs\service-YYYYMMDD.log`, `TempFiles\`.
+- Dev machine pe `C:\ProgramData\LdPosService\logs\` ke July 2026 logs ek doosri service ke hain (LdOposService: Verifone auth, CoreScanner barcode). Woh bhi same folder aur same `service-.log` naam use karti hai. Agar store machine pe dono services saath chalein to Serilog ka file sink ek waqt mein ek process ko hi file deta hai, doosri ke logs chup chaap gayab honge. Sawal: dono ek machine pe chalti hain?
 
-## Commits
+## Commits (sirf code; notes ke commits yahan nahi)
 
 | Commit | Date | Kya |
 |---|---|---|
