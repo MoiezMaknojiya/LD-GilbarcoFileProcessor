@@ -18,7 +18,7 @@ Yeh file har review point ka masla, discussion, faisla aur status rakhti hai. Ha
 | 2 | Logout pe saari pending transactions delete | Bara | CHOR DO | - |
 | 3 | POS folder ki originals kabhi delete nahi, restart pe sab dobara process | Bara | CHOR DO (dekho point 16) | - |
 | 4 | Watcher pehli baar fail ho to service hamesha phansi | Bara | PENDING | |
-| 5 | Auto-login token verify nahi karta | Bara | PENDING | |
+| 5 | Auto-login token verify nahi karta | Bara | CHOR DO (token kabhi expire nahi hota) | - |
 | 6 | DeptId 0 ka risk | Bara | PENDING | |
 | 7 | Network-error break wala code dead tha | Darmiyana | DONE (point 1 ke saath) | 04597f3 |
 | 8 | Watcher sirf Created event sunta hai | Darmiyana | PENDING | |
@@ -91,9 +91,9 @@ Natija: start pe fail ho ya baad mein mare, dono case zyada se zyada 1 minute me
 
 **Ek rukawat:** app typed UUID save nahi karta, DB ka `UUID` column asal mein server ka `user.id` hai. To app chup chaap dobara login bhi nahi kar sakta.
 
-**Sawal (2026-10-06):** lotteryscreen.app ka token kabhi expire ya revoke hota hai? Agar kabhi nahi (sirf logout pe khatam) to yeh point CHOR DO.
+**Faisla (Moiez, 2026-10-06): CHOR DO.** lotteryscreen.app ka token kabhi expire ya revoke nahi hota, sirf logout pe khatam hota hai. To saved token hamesha valid hai, verify karne ki zaroorat nahi.
 
-**Fix idea agar expire hota hai:** typed UUID bhi DB mein save karo, app start pe usi se dobara login kar ke taza token lo, fail pe login screen. Ya service 401 pe DB mein flag likhe jo Dashboard dikhaye.
+**Agar kabhi yeh badle** (token expiry ya server-side revoke aaye): typed UUID bhi DB mein save karo, app start pe usi se dobara login kar ke taza token lo, fail pe login screen.
 
 ### 6. DeptId 0 ka risk — PENDING
 
