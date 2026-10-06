@@ -16,7 +16,7 @@ Yeh file har review point ka masla, discussion, faisla aur status rakhti hai. Ha
 |---|---|---|---|---|
 | 1 | Upload sirf nayi file pe trigger hota tha | Bara | DONE | 04597f3 |
 | 2 | Logout pe saari pending transactions delete | Bara | CHOR DO | - |
-| 3 | POS folder ki originals kabhi delete nahi, restart pe sab dobara process | Bara | PENDING | |
+| 3 | POS folder ki originals kabhi delete nahi, restart pe sab dobara process | Bara | AADHA: delete CHOR DO, duplicate upload + Modisoft race PENDING | |
 | 4 | Watcher pehli baar fail ho to service hamesha phansi | Bara | PENDING | |
 | 5 | Auto-login token verify nahi karta | Bara | PENDING | |
 | 6 | DeptId 0 ka risk | Bara | PENDING | |
@@ -61,9 +61,14 @@ Yeh file har review point ka masla, discussion, faisla aur status rakhti hai. Ha
 
 **Masla:** Service original XML ko POS folder se kabhi delete nahi karti. `FileMonitorService.cs:274` sirf temp mein copy karta hai, aur delete sirf temp file ki hoti hai. Service restart ya network wapas aane pe line 88 aur 347 se `CopyExistingFilesAsync` folder ki har XML dobara copy (line 393) aur process karti hai. Pehle se uploaded wali bhi, kyunke unki DB row upload ke baad delete ho chuki hoti hai aur `INSERT OR IGNORE` unhe nayi row samajh ke dobara daal deta hai. Nateeja: duplicate upload.
 
-**Yeh tab masla hai jab:** Passport khud apna export folder saaf na karta ho, aur server `check-json` pe TransactionID dedupe na karta ho.
+**Faisla (Moiez, 2026-10-06), delete wala hissa: CHOR DO.** Usi folder se ek aur software, Modisoft, bhi padhta hai aur wohi files delete karta hai. Hum delete karein to Modisoft padh nahi payega. Passport bhi har 7 din mein folder khud khali kar deta hai. To originals ko haath nahi lagana, yeh intended hai.
 
-**Sawal Moiez ke liye:** Passport folder purge karta hai? Server duplicate TransactionID reject karta hai?
+**Abhi khula, hissa (b): restart pe duplicate upload.** Yeh delete se alag masla hai. Jab tak file folder mein hai (Modisoft ke delete tak, zyada se zyada 7 din), service restart ya network wapas aane pe woh file dobara DB mein jayegi aur dobara upload hogi, chahe pehle upload ho chuki ho. Browse Folder dabana bhi service restart hai.
+- Agar server `check-json` pe same TransactionID dobara aaye to reject karta hai: poora point CHOR DO.
+- Agar nahi: fix idea yeh hai ke upload success pe row delete na karein, `IsProcessed = 1` karein (column pehle se hai, kabhi use nahi hua) aur 14 din tak rakhein. Phir `INSERT OR IGNORE` purani TransId ko khud skip karega. Shart: TransactionID dono Passports mein unique ho. Agar dono registers same number de sakte hain to FileName pe dedupe karna padega.
+- Sawal: server dedupe karta hai? TransactionID dono Passports mein unique hai ya register wise repeat ho sakta hai?
+
+**Abhi khula, hissa (c): Modisoft delete ki race.** Service file aane pe pehle lock check karti hai (35 second tak wait) phir copy. Agar Modisoft is dauran file delete kar de to `FileMonitorService.cs:264` "no longer exists" log kar ke chhod deta hai, aur yeh transaction kabhi upload nahi hoti kyunke file gayab hai, restart scan bhi nahi dekhega. Sawal: Modisoft file aane ke kitni der baad delete karta hai? Seconds, minutes, ya din ke end pe?
 
 ### 4. Watcher pehli baar fail ho to service hamesha phansi — PENDING
 
