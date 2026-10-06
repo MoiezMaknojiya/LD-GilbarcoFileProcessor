@@ -153,6 +153,8 @@ Yeh file har review point ka masla, discussion, faisla aur status rakhti hai. Ha
 
 **Fix idea (dono case mein behtar):** `UploadJsonAsync` bool ki jagah teen outcome de: Success, Rejected (4xx, server ne samajh ke mana kiya), Failed (network, timeout, 5xx). Rejected pe status aur body log karo, row hatao, agli row pe chalo. Failed pe break aur agle minute retry. Response body log hone se duplicate ka message bhi log mein dikhega, abhi woh kahin nahi dikhta.
 
+**Moiez ka faisla (2026-10-06):** Windows service ko duplicate rokne ki zaroorat nahi, server rokta hai. Client-side dedupe (IsProcessed retention, FileName check waghera) nahi karna. Point 16 dedupe ke baare mein nahi hai, sirf is baare mein hai ke server ka "mana" client ke liye "network fail" na ban jaye.
+
 **Sawal Moiez ke liye:** `check-json` duplicate TransactionID pe kya return karta hai, HTTP status aur body?
 
 ## Background facts
