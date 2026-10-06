@@ -29,7 +29,8 @@ Yeh file har review point ka masla, discussion, faisla aur status rakhti hai. Ha
 | 13 | UI freeze, WaitForStatus UI thread pe | Chhota | PENDING | |
 | 14 | UNC path pe sync Directory.Exists | Chhota | PENDING | |
 | 15 | Dead code aur faltu saaman | Chhota | PENDING | |
-| 16 | Server ka reject (4xx) aur network fail ek jaise treat; point 1 ke baad rejected row queue block kar sakti hai | Bara | PENDING | |
+| 16 | Server ka reject (4xx) aur network fail ek jaise treat; point 1 ke baad rejected row queue block kar sakti hai | Bara | CHOR DO (server 200 deta hai) | - |
+| 17 | LdOposService aur LdFileProcessor same log folder aur same file naam | Chhota | PENDING | |
 
 ## Points tafseel se
 
@@ -50,7 +51,7 @@ Yeh file har review point ka masla, discussion, faisla aur status rakhti hai. Ha
 
 **Ab behaviour:** B wali stranded transaction max 1 minute late. Net wapas aaye to 1 minute ke andar sab pending nikal jaati hain. Net down aur 20 pending hon to pehli fail pe pass band, agle minute dobara.
 
-**Caveat:** "pehli fail pe break" tab galat hai jab server kisi row ko hamesha error status se reject kare, woh row baaki queue block kar degi. Dekho point 16.
+**Caveat:** "pehli fail pe break" tab galat hota jab server kisi row ko hamesha error status se reject karta. Point 16 mein confirm hua ke server duplicate pe 200 deta hai, to yeh caveat lagu nahi hoti.
 
 **Deploy:** Sirf code mein hai. Store machine pe service dobara publish aur restart zaroori.
 
@@ -155,7 +156,13 @@ Yeh file har review point ka masla, discussion, faisla aur status rakhti hai. Ha
 
 **Moiez ka faisla (2026-10-06):** Windows service ko duplicate rokne ki zaroorat nahi, server rokta hai. Client-side dedupe (IsProcessed retention, FileName check waghera) nahi karna. Point 16 dedupe ke baare mein nahi hai, sirf is baare mein hai ke server ka "mana" client ke liye "network fail" na ban jaye.
 
-**Sawal Moiez ke liye:** `check-json` duplicate TransactionID pe kya return karta hai, HTTP status aur body?
+**Faisla (Moiez, 2026-10-06): CHOR DO.** `check-json` duplicate pe HTTP 200 deta hai. To `IsSuccessStatusCode` true, row delete, queue block nahi hoti. Point 1 ka "pehli fail pe break" sirf asli network/server failures pe lagta hai, jo sahi hai.
+
+### 17. LdOposService aur LdFileProcessor same log folder aur same file naam — PENDING
+
+**Masla:** Dono services `C:\ProgramData\LdPosService\logs\service-YYYYMMDD.log` likhti hain (`LdFileProcessor/Program.cs:16`). Serilog ka file sink by default file exclusively kholta hai. Agar dono ek hi machine pe saath chalein to jo pehle shuru hui usi ke logs likhe jayenge, doosri ke chup chaap gayab. Dev machine pe yehi dikha: July 2026 ke logs sirf Opos ke the, FileProcessor ka ek bhi nahi.
+
+**Sawal:** Store machine pe dono saath chalti hain? Agar haan to fix ek line hai: file ka naam `LdFileProcessor-.log` kar do, ya `shared: true`.
 
 ## Background facts
 
