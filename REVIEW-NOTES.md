@@ -30,7 +30,7 @@ Yeh file har review point ka masla, discussion, faisla aur status rakhti hai. Ha
 | 14 | UNC path pe sync Directory.Exists | Chhota | PENDING | |
 | 15 | Dead code aur faltu saaman | Chhota | PENDING | |
 | 16 | Server ka reject (4xx) aur network fail ek jaise treat; point 1 ke baad rejected row queue block kar sakti hai | Bara | CHOR DO (server 200 deta hai) | - |
-| 17 | LdOposService aur LdFileProcessor same log folder aur same file naam | Chhota | PENDING | |
+| 17 | LdOposService aur LdFileProcessor same log folder aur same file naam | Chhota | CHOR DO | - |
 
 ## Points tafseel se
 
@@ -75,13 +75,25 @@ Yeh file har review point ka masla, discussion, faisla aur status rakhti hai. Ha
 
 **Masla:** `FileMonitorService.cs:85` `SetupFileWatcher()` exception khaa ke sirf log karta hai, return value nahi. Phir line 95 ka loop sirf uploads retry karta hai, watcher dobara nahi banata. Recovery sirf `OnWatcherError` pe hai, jo bina watcher ke aa hi nahi sakta. Matlab agar network share us ek lamhe mein gayab tha jab watcher ban raha tha, service restart tak koi file nahi uthegi.
 
-**Fix idea:** `SetupFileWatcher` bool return kare. Fail pe inner loop break kar ke 30 second baad dobara path check aur watcher.
+**Yehi masla `OnWatcherError` mein bhi hai:** line 343 `SetupFileWatcher()` call ke baad seedha `return` hai, "success" samajh ke. Agar setup andar fail hua to recovery loop khatam, watcher mara hua, koi nahi dekhta.
+
+**Suggested fix (2026-10-06), ek hi recovery raasta:**
+1. `SetupFileWatcher` ko `TrySetupFileWatcher()` banao jo bool de. Fail pe aadha bana watcher dispose, `_watcher = null`.
+2. `OnWatcherError` mein watcher dispose, `_watcher = null`, log (Win32 error 64 ko warning rakhne wala hissa rehne do). Uska 30-second `Task.Run` retry loop aur `_watcherRestartCts` hata do.
+3. `ExecuteAsync`: path milne ke baad `TrySetupFileWatcher()` false de to 30 second ruk ke `continue`, matlab path dobara padho aur dobara try.
+4. Har minute wale loop mein ek check: `_watcher == null` aur path accessible ho to `TrySetupFileWatcher()`, success pe `CopyExistingFilesAsync()` taake outage ki files uth jayein. Uske baad pending uploads jaise abhi hai.
+
+Natija: start pe fail ho ya baad mein mare, dono case zyada se zyada 1 minute mein recover. Do alag recovery mechanisms ki jagah ek.
 
 ### 5. Auto-login token verify nahi karta — PENDING
 
-**Masla:** `LdPosService/LoginForm.cs:75` DB mein user hai to seedha Dashboard, server se kuch nahi poochta. Token expire ho gaya to service ki uploads 401 pe chup chaap fail, Dashboard pe kuch nahi dikhta.
+**Masla:** Yeh WinForms app ki baat hai, lekin asar service pe padta hai. `LdPosService/LoginForm.cs:75` DB mein user row hai to seedha Dashboard, server se kuch nahi poochta. Service khud kabhi login nahi karti, woh bas DB ka saved `AccessToken` utha ke uploads mein lagati hai. Agar woh token server pe expire ya revoke ho jaye to service ki har upload 401 pe fail, row DB mein, har minute retry, aur Dashboard pe sirf "Welcome" dikhta hai, koi warning nahi.
 
-**Fix idea:** Dashboard load pe ek halka API call (ya logout endpoint nahi, koi "me" jaisa endpoint agar hai). Fail pe local user delete aur login screen.
+**Ek rukawat:** app typed UUID save nahi karta, DB ka `UUID` column asal mein server ka `user.id` hai. To app chup chaap dobara login bhi nahi kar sakta.
+
+**Sawal (2026-10-06):** lotteryscreen.app ka token kabhi expire ya revoke hota hai? Agar kabhi nahi (sirf logout pe khatam) to yeh point CHOR DO.
+
+**Fix idea agar expire hota hai:** typed UUID bhi DB mein save karo, app start pe usi se dobara login kar ke taza token lo, fail pe login screen. Ya service 401 pe DB mein flag likhe jo Dashboard dikhaye.
 
 ### 6. DeptId 0 ka risk — PENDING
 
@@ -162,7 +174,7 @@ Yeh file har review point ka masla, discussion, faisla aur status rakhti hai. Ha
 
 **Masla:** Dono services `C:\ProgramData\LdPosService\logs\service-YYYYMMDD.log` likhti hain (`LdFileProcessor/Program.cs:16`). Serilog ka file sink by default file exclusively kholta hai. Agar dono ek hi machine pe saath chalein to jo pehle shuru hui usi ke logs likhe jayenge, doosri ke chup chaap gayab. Dev machine pe yehi dikha: July 2026 ke logs sirf Opos ke the, FileProcessor ka ek bhi nahi.
 
-**Sawal:** Store machine pe dono saath chalti hain? Agar haan to fix ek line hai: file ka naam `LdFileProcessor-.log` kar do, ya `shared: true`.
+**Faisla (Moiez, 2026-10-06): CHOR DO.** Opos aur FileProcessor kabhi ek machine pe nahi chalenge. Jis customer ke paas Opos hai woh ticket scanner se update karta hai, usko FileProcessor ki zaroorat hi nahi.
 
 ## Background facts
 
