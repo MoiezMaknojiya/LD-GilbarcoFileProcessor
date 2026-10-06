@@ -3,6 +3,7 @@ using ApiLibrary.Models;
 using ApiLibrary.Utilities;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
+using System.Collections.Concurrent;
 using System.Xml.Linq;
 
 namespace LdFileProcessor
@@ -31,12 +32,30 @@ namespace LdFileProcessor
         private User? _currentUser;             // Current logged-in user info (contains DeptId, StoreId, etc.)
 
         private readonly SemaphoreSlim _uploadLock = new SemaphoreSlim(1, 1);   // Guards uploads: only one upload pass runs at a time (file events + periodic retry)
-        private CancellationTokenSource? _watcherRestartCts;                     // Cancels stale watcher restart tasks on new errors
+        private readonly object _watcherLock = new object();                     // Guards _watcher create/dispose (loop thread + watcher event threads)
+
+        // Files already picked up in this run, by file name. The folder scan only processes files that are NOT in
+        // here, so a file the watcher already handled is not processed twice in one run. In-memory only: after a
+        // restart everything in the folder is processed again, as before (the server rejects repeats itself).
+        private readonly ConcurrentDictionary<string, byte> _handledFiles = new ConcurrentDictionary<string, byte>(StringComparer.OrdinalIgnoreCase);
+        private DateTime _lastFolderScanUtc = DateTime.MinValue;
 
         // How often pending (not yet uploaded) transactions are retried while the watcher is running.
         // Covers two cases a file event alone cannot: a transaction saved while another upload pass was
         // already running, and uploads that failed because the network or API was unavailable.
         private static readonly TimeSpan UploadRetryInterval = TimeSpan.FromMinutes(1);
+
+        // Wait between attempts when the watcher cannot be created at startup (path answers Directory.Exists,
+        // but the directory handle could not be opened, e.g. a share that is still reconnecting).
+        private static readonly TimeSpan WatcherRetryDelay = TimeSpan.FromSeconds(30);
+
+        // Safety net for a watcher that dies silently (no Error event, e.g. the POS rebooted and the SMB session
+        // went stale): the folder is scanned on this interval and anything not handled in this run is processed.
+        private static readonly TimeSpan FolderScanInterval = TimeSpan.FromMinutes(5);
+
+        // The scan skips files modified more recently than this (the POS may still be writing them); they are
+        // picked up by the watcher or by the next scan.
+        private static readonly TimeSpan ScanSettleTime = TimeSpan.FromSeconds(10);
 
         public FileMonitorService(ILogger<FileMonitorService> logger, XmlJsonConverter xmlJsonConverter, FileUtilities fileUtilities, ApiServices apiService)
         {
@@ -81,18 +100,29 @@ namespace LdFileProcessor
                             {
                                 _logger.LogInformation("Folder path found and accessible: {path}. Starting file monitoring.\n", _folderPath);
 
-                                // Start watching the folder for new files
-                                SetupFileWatcher();
+                                // Start watching the folder for new files. If the watcher cannot be created
+                                // (path reachable, but the directory handle fails, e.g. a share that is still
+                                // reconnecting), wait and go round again: re-read the path and retry.
+                                if (!TrySetupFileWatcher())
+                                {
+                                    _logger.LogWarning("File watcher could not be started. Retrying in {delay}.\n", WatcherRetryDelay);
+                                    await Task.Delay(WatcherRetryDelay, stoppingToken);
+                                    continue;
+                                }
 
-                                // Process any existing files in the folder
-                                await CopyExistingFilesAsync();
+                                // Process any files already in the folder
+                                await ScanFolderAsync("startup");
 
-                                // Keep the service alive and retry pending uploads periodically.
+                                // Keep-alive loop. Every minute: make sure the watcher is alive (recreate it if it
+                                // died), scan the folder every FolderScanInterval as a safety net, retry pending
+                                // uploads. Only ends when the service is stopped.
                                 // (The old 30-second folder path refresh was removed on purpose; the desktop app
                                 // restarts the service when the folder changes.)
                                 while (!stoppingToken.IsCancellationRequested)
                                 {
                                     await Task.Delay(UploadRetryInterval, stoppingToken);
+                                    await EnsureWatcherAliveAsync();
+                                    await ScanFolderIfDueAsync();
                                     await RetryPendingUploadsAsync();
                                 }
                             }
@@ -186,52 +216,111 @@ namespace LdFileProcessor
             return Task.CompletedTask;
         }
       
-        private void SetupFileWatcher()
+        /// <summary>
+        /// Creates the FileSystemWatcher for _folderPath. Returns false (and leaves _watcher null) when it
+        /// cannot be created. On a UNC path that happens when the share answers Directory.Exists but the
+        /// directory handle cannot be opened yet (reconnect in progress, Wi-Fi blip). The caller decides
+        /// how to retry; this method never throws.
+        /// </summary>
+        private bool TrySetupFileWatcher()
+        {
+            if (string.IsNullOrEmpty(_folderPath))
+            {
+                _logger.LogError("Folder path is empty. Cannot start file watcher.\n");
+                return false;
+            }
+
+            if (!IsPathAccessible(_folderPath))
+            {
+                _logger.LogWarning("Folder path is not accessible, cannot start file watcher: {path}.\n", _folderPath);
+                return false;
+            }
+
+            lock (_watcherLock)
+            {
+                FileSystemWatcher? watcher = null;
+                try
+                {
+                    // Dispose old watcher if exists
+                    _watcher?.Dispose();
+                    _watcher = null;
+
+                    // Create new file watcher
+                    watcher = new FileSystemWatcher(_folderPath)
+                    {
+                        Filter = "*.xml",                                                                              // Only watch XML files
+                        NotifyFilter = NotifyFilters.FileName | NotifyFilters.CreationTime | NotifyFilters.LastWrite,  // Watch for new files
+                        InternalBufferSize = 65536                                                                     // 64KB buffer (handles multiple files)
+                    };
+
+                    // Register event handlers
+                    watcher.Created += OnFileCreated;      // Called when new file appears
+                    watcher.Error += OnWatcherError;       // Called when error occurs (e.g., network disconnect)
+
+                    // Publish before enabling: if an Error fires immediately, OnWatcherError must see this instance
+                    _watcher = watcher;
+
+                    // This is the call that actually opens the directory handle and can throw on a flaky share
+                    watcher.EnableRaisingEvents = true;
+
+                    // Log different message for network vs local paths
+                    if (IsUncPath(_folderPath))
+                    {
+                        _logger.LogInformation("File watcher started for UNC network path: {path}.\n", _folderPath);
+                    }
+                    else
+                    {
+                        _logger.LogInformation("File watcher started for local path: {path}.\n", _folderPath);
+                    }
+
+                    return true;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Error setting up file watcher for {path}.\n\n", _folderPath);
+                    if (ReferenceEquals(_watcher, watcher))
+                    {
+                        _watcher = null;
+                    }
+                    try { watcher?.Dispose(); } catch { /* nothing useful to do */ }
+                    return false;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Runs from the keep-alive loop every minute. If the watcher is gone (it failed to start, or
+        /// OnWatcherError tore it down after a network error) and the folder is reachable again, recreate it
+        /// and scan the folder for files that arrived while it was down. Never throws.
+        /// </summary>
+        private async Task EnsureWatcherAliveAsync()
         {
             try
             {
-                // Validate folder path
-                if (string.IsNullOrEmpty(_folderPath))
-                {
-                    _logger.LogError("Folder path is invalid or does not exist: {path}.\n", _folderPath);
+                if (_watcher != null)
                     return;
-                }
 
                 if (!IsPathAccessible(_folderPath))
                 {
-                    _logger.LogError("Folder path is not accessible: {path}.\n", _folderPath);
+                    _logger.LogWarning("File watcher is down and folder path is not accessible: {path}. Will check again in {interval}.\n", _folderPath, UploadRetryInterval);
                     return;
                 }
 
-                // Dispose old watcher if exists
-                _watcher?.Dispose();
+                _logger.LogInformation("Folder path is accessible again: {path}. Restarting file watcher.\n", _folderPath);
 
-                // Create new file watcher
-                _watcher = new FileSystemWatcher(_folderPath)
+                if (!TrySetupFileWatcher())
                 {
-                    Filter = "*.xml",                                                          // Only watch XML files
-                    NotifyFilter = NotifyFilters.FileName | NotifyFilters.CreationTime | NotifyFilters.LastWrite,  // Watch for new files
-                    EnableRaisingEvents = true,                                                // Start watching immediately
-                    InternalBufferSize = 65536                                                 // 64KB buffer (handles multiple files)
-                };
-
-                // Register event handlers
-                _watcher.Created += OnFileCreated;      // Called when new file appears
-                _watcher.Error += OnWatcherError;       // Called when error occurs (e.g., network disconnect)
-
-                // Log different message for network vs local paths
-                if (IsUncPath(_folderPath))
-                {
-                    _logger.LogInformation("File watcher started for UNC network path: {path}.\n", _folderPath);
+                    _logger.LogWarning("File watcher could not be restarted. Will try again in {interval}.\n", UploadRetryInterval);
+                    return;
                 }
-                else
-                {
-                    _logger.LogInformation("File watcher started for local path: {path}.\n", _folderPath);
-                }
+
+                // Process any files that arrived while the watcher was down
+                await ScanFolderAsync("watcher recovery");
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error setting up file watcher.\n\n");
+                // Must never throw: an exception here would bubble up into ExecuteAsync
+                _logger.LogError(ex, "Error while checking/restarting the file watcher.\n\n");
             }
         }
 
@@ -272,6 +361,7 @@ namespace LdFileProcessor
                 string tempFilePath = Path.Combine(_tempFolderPath, fileName);
 
                 File.Copy(fullPath, tempFilePath, true);  // Overwrite if exists
+                _handledFiles[fileName] = 0;  // Mark as handled in this run so the periodic folder scan skips it
                 _logger.LogInformation("File copied to temp: {path}.\n", tempFilePath);
 
                 // Process the file
@@ -294,95 +384,114 @@ namespace LdFileProcessor
             // This is a normal transient condition for UNC/network paths — log as Warning, not Error
             if (ex is System.ComponentModel.Win32Exception w32ex && w32ex.NativeErrorCode == 64)
             {
-                _logger.LogWarning("Network path temporarily unavailable (Win32 error 64). " +
-                    "Will retry every 30 seconds until it comes back: {path}.\n", _folderPath);
+                _logger.LogWarning("Network path temporarily unavailable (Win32 error 64): {path}. " +
+                    "The watcher will be recreated by the keep-alive loop once the path is reachable again.\n", _folderPath);
             }
             else
             {
-                _logger.LogError(ex, "File watcher error. This may occur if network path becomes unavailable.\n");
+                _logger.LogError(ex, "File watcher error (network path unavailable, or the watcher buffer overflowed). " +
+                    "The watcher will be recreated by the keep-alive loop.\n");
             }
 
-            // Cancel any previous restart task that is still waiting
-            _watcherRestartCts?.Cancel();
-            _watcherRestartCts?.Dispose();
-            _watcherRestartCts = new CancellationTokenSource();
-            var token = _watcherRestartCts.Token;
-
-            // Retry loop — keeps trying every 30 seconds until path is accessible again
-            // FIX #2: Wrapped entire Task.Run body in try/catch so exceptions don't silently kill the recovery loop
-            Task.Run(async () =>
+            // Tear the broken watcher down. EnsureWatcherAliveAsync (every minute) sees _watcher == null,
+            // recreates it when the path is reachable and scans the folder for anything that was missed.
+            var dead = sender as FileSystemWatcher;
+            lock (_watcherLock)
             {
-                try
+                if (dead != null && ReferenceEquals(_watcher, dead))
                 {
-                    int attempt = 0;
-
-                    while (!token.IsCancellationRequested)
-                    {
-                        attempt++;
-
-                        try
-                        {
-                            await Task.Delay(30000, token);
-                        }
-                        catch (OperationCanceledException)
-                        {
-                            _logger.LogInformation("Watcher restart cancelled (superseded by newer error event).\n");
-                            return;
-                        }
-
-                        if (string.IsNullOrEmpty(_folderPath))
-                        {
-                            _logger.LogWarning("Folder path is empty. Stopping watcher restart attempts.\n");
-                            return;
-                        }
-
-                        if (IsPathAccessible(_folderPath))
-                        {
-                            _logger.LogInformation(
-                                "Network path is accessible again (attempt {attempt}). Restarting file watcher.\n", attempt);
-                            SetupFileWatcher();
-
-                            // Process any files that arrived during the outage
-                            _logger.LogInformation("Checking for files that arrived during network outage.\n");
-                            await CopyExistingFilesAsync();
-
-                            return;  // Success — exit retry loop
-                        }
-
-                        _logger.LogWarning(
-                            "Network path still unavailable (attempt {attempt}): {path}. Retrying in 30 seconds.\n",
-                            attempt, _folderPath);
-                    }
+                    _watcher = null;
                 }
-                catch (Exception innerEx)
+            }
+
+            if (dead != null)
+            {
+                // Dispose off the watcher's own event thread
+                Task.Run(() =>
                 {
-                    // Without this catch, any exception here would silently stop recovery with no log entry
-                    _logger.LogError(innerEx, "Unhandled error in watcher restart loop. Watcher will not auto-recover.\n");
-                }
-            }, token);
+                    try { dead.Dispose(); } catch { /* already gone */ }
+                });
+            }
         }
 
-        private async Task CopyExistingFilesAsync()
+        /// <summary>
+        /// Runs from the keep-alive loop. Scans the folder every FolderScanInterval as a safety net for a
+        /// watcher that died silently (no Error event). Never throws.
+        /// </summary>
+        private async Task ScanFolderIfDueAsync()
+        {
+            try
+            {
+                if (_watcher == null)
+                    return;  // path is down; EnsureWatcherAliveAsync scans once it is back
+
+                if (DateTime.UtcNow - _lastFolderScanUtc < FolderScanInterval)
+                    return;
+
+                await ScanFolderAsync("periodic");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error in periodic folder scan.\n\n");
+            }
+        }
+
+        /// <summary>
+        /// Copies every *.xml in the folder that has not been handled in this run to the temp folder and
+        /// processes it. On "startup" nothing has been handled yet, so everything in the folder is processed
+        /// (the server rejects repeats itself). After that only files the watcher missed are picked up.
+        /// Never throws.
+        /// </summary>
+        private async Task ScanFolderAsync(string reason)
         {
             try
             {
                 // Check if folder is accessible
                 if (!IsPathAccessible(_folderPath))
                 {
-                    _logger.LogWarning("Folder not found: {path}.\n", _folderPath);
+                    _logger.LogWarning("Folder scan ({reason}) skipped, folder not accessible: {path}.\n", reason, _folderPath);
                     return;
                 }
 
-                _logger.LogInformation("======================================== COPY EXISTING FILES START ========================================");
+                _lastFolderScanUtc = DateTime.UtcNow;
 
                 // Get all XML files in folder
                 var xmlFiles = Directory.GetFiles(_folderPath, "*.xml");
-                _logger.LogInformation("Found {count} existing XML files.\n", xmlFiles.Length);
+
+                // Forget handled files that are no longer in the folder (Modisoft / Passport removed them)
+                var present = new HashSet<string>(xmlFiles.Select(f => Path.GetFileName(f)), StringComparer.OrdinalIgnoreCase);
+                foreach (var handled in _handledFiles.Keys)
+                {
+                    if (!present.Contains(handled))
+                        _handledFiles.TryRemove(handled, out _);
+                }
+
+                // Only files not handled in this run; skip ones that may still be being written
+                var cutoff = DateTime.UtcNow - ScanSettleTime;
+                var newFiles = new List<string>();
+                foreach (var file in xmlFiles)
+                {
+                    if (_handledFiles.ContainsKey(Path.GetFileName(file)))
+                        continue;
+                    if (File.GetLastWriteTimeUtc(file) > cutoff)
+                        continue;  // too fresh, pick it up next time
+                    newFiles.Add(file);
+                }
+
+                if (newFiles.Count == 0)
+                {
+                    if (reason == "startup")
+                        _logger.LogInformation("Folder scan ({reason}): no XML files to process.\n", reason);
+                    return;  // periodic scans stay silent when there is nothing to do
+                }
+
+                _logger.LogInformation("======================================== FOLDER SCAN ({reason}) START ========================================", reason);
+                _logger.LogInformation("Found {count} XML file(s) to process ({total} in folder).\n", newFiles.Count, xmlFiles.Length);
 
                 // Step 1: Copy all files to temp folder
                 var copiedFiles = new List<string>();
 
-                foreach (var file in xmlFiles)
+                foreach (var file in newFiles)
                 {
                     try
                     {
@@ -391,11 +500,13 @@ namespace LdFileProcessor
 
                         // FIX #5: Always overwrite — a pre-existing temp file may be corrupt/incomplete from a previous crash
                         File.Copy(file, tempFilePath, true);
-                        _logger.LogInformation("Copied existing file: {file}.\n", fileName);
+                        _handledFiles[fileName] = 0;  // Mark as handled in this run
+                        _logger.LogInformation("Copied file: {file}.\n", fileName);
                         copiedFiles.Add(tempFilePath);
                     }
                     catch (IOException ioEx)
                     {
+                        // Locked by the POS or a network hiccup: not marked as handled, the next scan retries it
                         _logger.LogError(ioEx, "IO error copying file from network: {file}.\n\n", file);
                     }
                     catch (UnauthorizedAccessException uaEx)
@@ -408,8 +519,7 @@ namespace LdFileProcessor
                     }
                 }
 
-                _logger.LogInformation("======================================== PROCESS EXISTING FILES START ========================================");
-                _logger.LogInformation("Starting to process {count} copied files.\n", copiedFiles.Count);
+                _logger.LogInformation("Starting to process {count} copied file(s).\n", copiedFiles.Count);
 
                 // Step 2: Process all copied files
                 foreach (var tempFilePath in copiedFiles)
@@ -424,12 +534,11 @@ namespace LdFileProcessor
                     }
                 }
 
-                _logger.LogInformation("======================================== PROCESS EXISTING FILES END ========================================");
-                _logger.LogInformation("Finished processing all existing files.\n\n");
+                _logger.LogInformation("======================================== FOLDER SCAN ({reason}) END ========================================\n", reason);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error in CopyExistingFilesAsync.\n\n");
+                _logger.LogError(ex, "Error in folder scan ({reason}).\n\n", reason);
             }
         }
 
@@ -745,21 +854,25 @@ namespace LdFileProcessor
             _logger.LogInformation("======================================== SERVICE STOP ========================================");
             _logger.LogInformation("File Monitor Service stopping.\n");
 
-            _watcherRestartCts?.Cancel();
-            _watcherRestartCts?.Dispose();
-
             // Stop file watcher
-            _watcher?.Dispose();
+            DisposeWatcher();
 
             await base.StopAsync(cancellationToken);
         }
 
         public override void Dispose()
         {
-            _watcherRestartCts?.Cancel();
-            _watcherRestartCts?.Dispose();
-            _watcher?.Dispose();
+            DisposeWatcher();
             base.Dispose();
+        }
+
+        private void DisposeWatcher()
+        {
+            lock (_watcherLock)
+            {
+                try { _watcher?.Dispose(); } catch { /* shutting down, nothing useful to do */ }
+                _watcher = null;
+            }
         }
 
         private bool IsPathAccessible(string path)
