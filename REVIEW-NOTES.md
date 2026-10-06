@@ -31,6 +31,7 @@ Yeh file har review point ka masla, discussion, faisla aur status rakhti hai. Ha
 | 15 | Dead code aur faltu saaman | Chhota | PENDING | |
 | 16 | Server ka reject (4xx) aur network fail ek jaise treat; point 1 ke baad rejected row queue block kar sakti hai | Bara | CHOR DO (server 200 deta hai) | - |
 | 17 | LdOposService aur LdFileProcessor same log folder aur same file naam | Chhota | CHOR DO | - |
+| 18 | Mapped drive (Z:) service ko dikhta hi nahi, Dashboard usko accept kar leta hai | Bara | PENDING | |
 
 ## Points tafseel se
 
@@ -84,6 +85,12 @@ Yeh file har review point ka masla, discussion, faisla aur status rakhti hai. Ha
 4. Har minute wale loop mein ek check: `_watcher == null` aur path accessible ho to `TrySetupFileWatcher()`, success pe `CopyExistingFilesAsync()` taake outage ki files uth jayein. Uske baad pending uploads jaise abhi hai.
 
 Natija: start pe fail ho ya baad mein mare, dono case zyada se zyada 1 minute mein recover. Do alag recovery mechanisms ki jagah ek.
+
+**Confirmed (Moiez, 2026-10-06):** folder UNC hai, `\\10.5.48.2\XMLGateway\BOOutBox` (Passport ka XMLGateway BOOutBox), kabhi `Z:` mapped drive se bhi. Wi-Fi pe "network path not accessible" aur kabhi Win32 error aata hai. **Requirement:** service kuch bhi ho jaye retry karti rahe, jab tak Moiez khud stop na kare.
+
+**Optional step 5, silent death ke liye:** FileSystemWatcher network share pe kabhi bina `Error` event ke bhi mar jaata hai (Passport reboot, SMB session stale). Tab `_watcher` null nahi hota, step 4 usko nahi pakdega. Safety net: har 5 minute folder ka ek scan, sirf woh files process jo is run mein pehle nahi dekhi (in-memory list, restart pe khali). Yeh server dedupe nahi hai, bas ek run ke andar same file dobara na uthe. Point 8 ka rename wala case bhi isi se cover ho jaata hai.
+
+**Deployment tip (code nahi):** process khud crash ho jaye to Windows usko wapas chalaye: `sc failure LdFileProcessor reset= 86400 actions= restart/60000/restart/60000/restart/60000`. Ya services.msc mein Recovery tab, teeno pe "Restart the Service".
 
 ### 5. Auto-login token verify nahi karta — PENDING
 
@@ -175,6 +182,12 @@ Natija: start pe fail ho ya baad mein mare, dono case zyada se zyada 1 minute me
 **Masla:** Dono services `C:\ProgramData\LdPosService\logs\service-YYYYMMDD.log` likhti hain (`LdFileProcessor/Program.cs:16`). Serilog ka file sink by default file exclusively kholta hai. Agar dono ek hi machine pe saath chalein to jo pehle shuru hui usi ke logs likhe jayenge, doosri ke chup chaap gayab. Dev machine pe yehi dikha: July 2026 ke logs sirf Opos ke the, FileProcessor ka ek bhi nahi.
 
 **Faisla (Moiez, 2026-10-06): CHOR DO.** Opos aur FileProcessor kabhi ek machine pe nahi chalenge. Jis customer ke paas Opos hai woh ticket scanner se update karta hai, usko FileProcessor ki zaroorat hi nahi.
+
+### 18. Mapped drive (Z:) service ko dikhta hi nahi — PENDING
+
+**Masla:** Mapped drive letter user ke logon session ki cheez hai. Windows service session 0 mein LocalSystem pe chalti hai, usko user ka `Z:` nazar hi nahi aata. Dashboard mein agar `Z:\XMLGateway\BOOutBox` chuna jaye to `DashboardForm.cs:72` `Directory.Exists` user ke liye true dega, path DB mein save ho jayega, lekin service ke liye `Directory.Exists` hamesha false: log mein "Folder path found but not accessible" har 30 second, hamesha. Koi file kabhi nahi uthegi aur user ko lagega network ka masla hai.
+
+**Fix idea:** Dashboard mein folder chunte waqt agar path drive letter se shuru ho aur woh network drive ho, to `WNetGetConnection` se UNC nikaal ke wohi save karo (`Z:\...` → `\\10.5.48.2\XMLGateway\...`). Local drive ho to jaise hai. Fallback: convert na ho sake to saaf message "network drive letter nahi, `\\server\share` path chuno".
 
 ## Background facts
 
