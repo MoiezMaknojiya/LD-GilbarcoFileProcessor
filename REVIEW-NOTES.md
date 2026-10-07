@@ -31,7 +31,7 @@ Yeh file har review point ka masla, discussion, faisla aur status rakhti hai. Ha
 | 15 | Dead code aur faltu saaman | Chhota | DONE | 6e49536 |
 | 16 | Server ka reject (4xx) aur network fail ek jaise treat; point 1 ke baad rejected row queue block kar sakti hai | Bara | CHOR DO (server 200 deta hai) | - |
 | 17 | LdOposService aur LdFileProcessor same log folder aur same file naam | Chhota | CHOR DO | - |
-| 18 | Mapped drive (Z:) service ko dikhta hi nahi, Dashboard usko accept kar leta hai | Bara | PENDING | |
+| 18 | Mapped drive (Z:) service ko dikhta hi nahi, Dashboard usko accept kar leta hai | Bara | DONE | 96bdd78 |
 | 19 | Disable-RunExeAsAdmin.bat poori machine ka UAC prompt band karta hai | Darmiyana (deployment) | PENDING | |
 
 ## Points tafseel se
@@ -176,6 +176,10 @@ Pehli line: process crash ho to Windows 5s, 10s, 30s baad wapas chalaye, 24 ghan
 
 **Faisla chahiye:** Kaunsa sahi hai? Phir doosra match karo.
 
+**Scene samjhaya (2026-10-07):** Functional bug nahi hai, jhoot bolne wala comment aur log hai. Code asal mein 50 baar 700ms wait karta hai, matlab 35 second tak file ke free hone ka intezaar. Comment aur log message purane 10 x 500ms = 5 second wale version ke hain; kisi ne numbers badhaye aur text bhool gaya. Nateeja log mein aisa dikhta hai: "File is still in use, retrying in 500ms (11/10)", "(12/10)" ... "(50/10)", aur aakhir mein "still locked after 10 retries" jab asal mein 50 hue. Jo log padhe woh confuse hota hai, 500ms likha hai lekin 700ms ruk raha hai, 10 ki limit likhi hai lekin 50 tak gin raha hai.
+
+**Recommendation:** 35 second theek hai (Passport likhne mein kam waqt leta hai, Modisoft bhi padhte waqt thodi der lock rakh sakta hai, 5 second kam the isi liye badhaye gaye honge). Fix: do constants `LockRetryCount = 50` aur `LockRetryDelay = 700ms`, loop aur dono log messages unhi se number lein, taake dobara kabhi drift na ho. Saath mein: ab agar 35 second baad bhi locked ho to file skip hoti hai lekin khoti nahi, point 4 ka 5-minute scan usko dobara uthata hai kyunke woh handled list mein nahi gayi. Faisla baaki: 35 second rakhna hai ya koi aur number?
+
 ### 12. Nested form chain — PENDING
 
 **Masla:** `LoginForm.cs:50` aur `DashboardForm.cs:43` dono `ShowDialog` nested chalate hain. Login, Dashboard, phir naya Login, naya Dashboard. Har logout/login pe ek hidden form stack pe baitha rehta hai jab tak app band na ho.
@@ -235,7 +239,16 @@ Pehli line: process crash ho to Windows 5s, 10s, 30s baad wapas chalaye, 24 ghan
 
 **Faisla (Moiez, 2026-10-06): CHOR DO.** Opos aur FileProcessor kabhi ek machine pe nahi chalenge. Jis customer ke paas Opos hai woh ticket scanner se update karta hai, usko FileProcessor ki zaroorat hi nahi.
 
-### 18. Mapped drive (Z:) service ko dikhta hi nahi — PENDING
+### 18. Mapped drive (Z:) service ko dikhta hi nahi — DONE (96bdd78)
+
+**Kya badla (2026-10-07), sirf `LdPosService/DashboardForm.cs`:**
+- Naya helper `TryGetServicePath` (line 118 ke aas paas): path `\\` se shuru ho to jaise hai; drive letter ho aur `DriveInfo.DriveType` Network na ho (C:, D:) to jaise hai; Network ho to `WNetGetConnection` (mpr.dll) se drive letter ka share nikaal ke `\\server\share` + baaki path bana deta hai.
+- Browse Folder (line 76): Directory.Exists ke baad, save se pehle, yeh helper chalta hai. DB mein hamesha UNC jaata hai. Success message mein UNC dikhta hai, aur agar user ne Z: chuna tha to ek note "Z:\... is a mapped drive, the service will use the network path shown above".
+- Share pata na chal sake (drive disconnected, error code): save nahi hota, message "network drive letter nahi, `\\10.5.48.2\XMLGateway\BOOutBox` jaisa path chuno".
+
+**Test nahi ho saka yahan:** dev machine pe koi mapped drive nahi. Store pe ek baar check karna: Z: map karo, Browse Folder mein `Z:\BOOutBox` chuno, success message mein `\\10.5.48.2\...` dikhna chahiye.
+
+**Pehle ka text, reference ke liye:**
 
 **Masla:** Mapped drive letter user ke logon session ki cheez hai. Windows service session 0 mein LocalSystem pe chalti hai, usko user ka `Z:` nazar hi nahi aata. Dashboard mein agar `Z:\XMLGateway\BOOutBox` chuna jaye to `DashboardForm.cs:72` `Directory.Exists` user ke liye true dega, path DB mein save ho jayega, lekin service ke liye `Directory.Exists` hamesha false: log mein "Folder path found but not accessible" har 30 second, hamesha. Koi file kabhi nahi uthegi aur user ko lagega network ka masla hai.
 
@@ -271,3 +284,4 @@ Pehli line: process crash ho to Windows 5s, 10s, 30s baad wapas chalaye, 24 ghan
 | e6e2af5 | 2026-10-06 | Point 4 refinement: periodic scan finds missed files -> recreate watcher |
 | 71ef215 | 2026-10-06 | deploy\: install .bat with sc failure + failureflag, uninstall, UAC .bat, Installation Guide |
 | 6e49536 | 2026-10-07 | Point 15: dead code, Dapper, IsProcessed column, Serilog.AspNetCore, duplicate icon in resx |
+| 96bdd78 | 2026-10-07 | Point 18: Dashboard converts mapped drive letter to UNC before saving (WNetGetConnection) |
