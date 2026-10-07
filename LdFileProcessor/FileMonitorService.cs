@@ -90,7 +90,7 @@ namespace LdFileProcessor
                     }
 
                     // Create database tables if they don't exist
-                    DatabaseServices.InitializeDatabase();
+                    DatabaseServices.InitializeDatabase(_logger);
 
                     // Inner loop - keeps running until service is stopped
                     while (!stoppingToken.IsCancellationRequested)

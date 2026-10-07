@@ -1,4 +1,6 @@
 ﻿using ApiLibrary.Models;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using System.Data.SQLite;
 using System.Security.AccessControl;
 using System.Security.Principal;
@@ -20,8 +22,11 @@ namespace ApiLibrary
         }
 
         [System.Runtime.Versioning.SupportedOSPlatform("windows")]
-        public static void InitializeDatabase()
+        public static void InitializeDatabase(ILogger? logger = null)
         {
+            logger ??= NullLogger.Instance;
+            logger.LogInformation("Database file: {path}", dbPath);
+
             string? directory = Path.GetDirectoryName(dbPath);
             if (!string.IsNullOrEmpty(directory))
             {
@@ -43,15 +48,16 @@ namespace ApiLibrary
                         AccessControlType.Allow));
 
                     dirInfo.SetAccessControl(security);
-                    Console.WriteLine("Permissions set successfully.");
+                    logger.LogInformation("Folder permissions set for BUILTIN\\Users on {directory}.", directory);
                 }
                 catch (UnauthorizedAccessException ex)
                 {
-                    Console.WriteLine($"PERMISSION ERROR: {ex.Message}");
+                    // Expected when not running as administrator (the service runs as NetworkService); the desktop app sets them
+                    logger.LogWarning("Could not set folder permissions on {directory}: {message}", directory, ex.Message);
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"ERROR setting permissions: {ex.Message}");
+                    logger.LogWarning(ex, "Error setting folder permissions on {directory}.", directory);
                 }
             }
 
@@ -124,7 +130,7 @@ namespace ApiLibrary
             }
             catch (Exception ex)
             {
-                throw new Exception($"Failed to add user: {ex.Message}");
+                throw new Exception($"Failed to add user: {ex.Message}", ex);
             }
         }
 
@@ -146,7 +152,7 @@ namespace ApiLibrary
             }
             catch (Exception ex)
             {
-                throw new Exception($"Failed to delete user: {ex.Message}");
+                throw new Exception($"Failed to delete user: {ex.Message}", ex);
             }
         }
 
@@ -167,7 +173,7 @@ namespace ApiLibrary
             }
             catch (Exception ex)
             {
-                throw new Exception($"Failed to delete transactions: {ex.Message}");
+                throw new Exception($"Failed to delete transactions: {ex.Message}", ex);
             }
         }
 
@@ -190,7 +196,7 @@ namespace ApiLibrary
             }
             catch (Exception ex)
             {
-                throw new Exception($"Failed to update folder path: {ex.Message}");
+                throw new Exception($"Failed to update folder path: {ex.Message}", ex);
             }
         }
 
@@ -217,7 +223,7 @@ namespace ApiLibrary
             }
             catch (Exception ex)
             {
-                throw new Exception($"Failed to add transaction: {ex.Message}");
+                throw new Exception($"Failed to add transaction: {ex.Message}", ex);
             }
         }
 
@@ -239,7 +245,7 @@ namespace ApiLibrary
             }
             catch (Exception ex)
             {
-                throw new Exception($"Failed to delete transaction: {ex.Message}");
+                throw new Exception($"Failed to delete transaction: {ex.Message}", ex);
             }
         }
 
@@ -277,7 +283,7 @@ namespace ApiLibrary
             }
             catch (Exception ex)
             {
-                throw new Exception($"Failed to load last logged-in user: {ex.Message}");
+                throw new Exception($"Failed to load last logged-in user: {ex.Message}", ex);
             }
         }
 
@@ -298,7 +304,7 @@ namespace ApiLibrary
             }
             catch (Exception ex)
             {
-                throw new Exception($"Failed to count unprocessed transactions: {ex.Message}");
+                throw new Exception($"Failed to count unprocessed transactions: {ex.Message}", ex);
             }
         }
 
@@ -331,7 +337,7 @@ namespace ApiLibrary
             }
             catch (Exception ex)
             {
-                throw new Exception($"Failed to get unprocessed transactions: {ex.Message}");
+                throw new Exception($"Failed to get unprocessed transactions: {ex.Message}", ex);
             }
         }
 
