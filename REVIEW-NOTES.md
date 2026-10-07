@@ -17,7 +17,7 @@ Yeh file har review point ka masla, discussion, faisla aur status rakhti hai. Ha
 | 1 | Upload sirf nayi file pe trigger hota tha | Bara | DONE | 04597f3 |
 | 2 | Logout pe saari pending transactions delete | Bara | CHOR DO | - |
 | 3 | POS folder ki originals kabhi delete nahi, restart pe sab dobara process | Bara | CHOR DO (dekho point 16) | - |
-| 4 | Watcher pehli baar fail ho to service hamesha phansi | Bara | DONE | 27b1499 |
+| 4 | Watcher pehli baar fail ho to service hamesha phansi | Bara | DONE | 27b1499, e6e2af5 |
 | 5 | Auto-login token verify nahi karta | Bara | CHOR DO (token kabhi expire nahi hota) | - |
 | 6 | DeptId 0 ka risk | Bara | PENDING | |
 | 7 | Network-error break wala code dead tha | Darmiyana | DONE (point 1 ke saath) | 04597f3 |
@@ -91,7 +91,7 @@ Yeh file har review point ka masla, discussion, faisla aur status rakhti hai. Ha
 
 **Deploy:** service dobara publish aur restart zaroori. Crash recovery Install .bat mein hai (neeche "Deployment" dekho), manual command nahi.
 
-**Ek bachi hui kami (optional refinement):** watcher bina Error event ke chup chaap mar jaye (Example C neeche) to service 5-minute polling mode mein chalti rehti hai, watcher dobara nahi banta jab tak restart na ho. Files aati rehti hain, bas 5 minute late. 5-line fix: periodic scan ko nayi files milein jo watcher ko milni chahiye thin, to watcher dobara bana do. Faisla baaki.
+**Refinement DONE (e6e2af5):** watcher bina Error event ke chup chaap mar jaye to pehle service 5-minute polling mode mein chalti rehti thi, watcher restart tak wapas nahi aata tha. Ab `ScanFolderAsync` (line 491) mein: periodic scan ko aisi files milein jo is run mein handle nahi hui, to watcher ne unko report nahi kiya, matlab mara hua hai, wahin `TrySetupFileWatcher()` se dobara banao. Sehatmand watcher galti se dobara ban jaye to koi nuqsan nahi. Ab teeno case (start pe fail, Error event, chup chaap maut) max 5 minute mein poori tarah recover.
 
 **Pehle ka analysis aur plan, reference ke liye:**
 
@@ -120,7 +120,9 @@ sc failureflag LdFileProcessor 1
 
 Pehli line: process crash ho to Windows 5s, 10s, 30s baad wapas chalaye, 24 ghante baad counter reset. Doosri: agar service crash ke bagair non-zero exit code se band ho (host ka unhandled error) to bhi wahi recovery lage. Yeh sirf us case ke liye hai jo code ke bahar hai (runtime/native crash); code ke andar ab koi raasta nahi jahan se process khud mare.
 
-**Check kiya (2026-10-06):** FileProcessor ki asli .bat `E:\Dropbox\LD shared\Debug App\POS-Gilbarco-CSharp\LotteryDisplayPOS\Install-WindowService.bat` hai, 2026-02-02 ki. Usme `sc create` (line 46) aur `sc config obj= "NT AUTHORITY\NetworkService"` (line 56) hai, lekin **`sc failure` nahi hai**. Crash recovery abhi client pe set nahi hoti. Opos wali .bat (July) mein hai, yeh us se purani hai. Do lines upar wali `sc config` ke baad add karni hain, aur poora deploy folder repo ke `deploy\` mein copy hona chahiye taake versioned rahe. Faisla baaki.
+**Check kiya (2026-10-06):** FileProcessor ki asli .bat `E:\Dropbox\LD shared\Debug App\POS-Gilbarco-CSharp\LotteryDisplayPOS\Install-WindowService.bat` hai, 2026-02-02 ki. Usme `sc create` (line 46) aur `sc config obj= "NT AUTHORITY\NetworkService"` (line 56) hai, lekin **`sc failure` nahi hai**. Crash recovery abhi client pe set nahi hoti. Opos wali .bat (July) mein hai, yeh us se purani hai.
+
+**DONE (2026-10-06, 71ef215):** Dropbox folder mein nayi file `updated-Install-WindowService.bat` banai (purani ko haath nahi lagaya, Moiez ne kaha naam ke shuru mein "updated" lagao). Farq sirf naya step `[5/5]` jo `sc failure` aur `sc failureflag 1` chalata hai, header comment, aur SUCCESS message. Baaki original jaisi, NetworkService account aur "service start nahi hoti" wahi. Repo mein `deploy\` folder bana: `Install-WindowService.bat` (updated wali, saaf naam se), `Unistall-WindowService.bat`, `Disable-RunExeAsAdmin.Bat`, `Installation Guide.txt` jaise shipped hain. **Client ke liye:** agli install pe `updated-` wali chalani hai, purani delete kar do ya Dropbox mein purani ki jagah updated ka naam rakh do.
 
 **Service account NetworkService hai, LocalSystem nahi.** Matlab: (a) mapped drive Z: isko bhi nahi dikhta, point 18 wahi rehta hai; (b) UNC share pe access NetworkService ki identity se hota hai, production mein chal raha hai to share isko allow karta hai; (c) `InitializeDatabase` ka ACL set karna service ke andar fail hoga (admin chahiye), lekin Dashboard admin se pehle chal ke folder aur ACL bana deta hai aur NetworkService BUILTIN\Users mein hai, to DB aur logs likhna chalta hai.
 
@@ -239,7 +241,7 @@ Pehli line: process crash ho to Windows 5s, 10s, 30s baad wapas chalaye, 24 ghan
 - Publish: `FolderProfile.pubxml` → `C:\ProgramData\LotteryDisplayPOS\LdFileProcessor`, self-contained single-file win-x64. Yeh file gitignore mein hai (`*.pubxml`).
 - Runtime data: `C:\ProgramData\LdPosService\` mein `PosData.db`, `logs\service-YYYYMMDD.log`, `TempFiles\`.
 - Dev machine pe `C:\ProgramData\LdPosService\logs\` ke July 2026 logs ek doosri service ke hain (LdOposService: Verifone auth, CoreScanner barcode). Woh bhi same folder aur same `service-.log` naam use karti hai. Agar store machine pe dono services saath chalein to Serilog ka file sink ek waqt mein ek process ko hi file deta hai, doosri ke logs chup chaap gayab honge. Sawal: dono ek machine pe chalti hain? (Jawab: nahi, point 17.)
-- Deployment package: `E:\Dropbox\LD shared\Debug App\POS-Gilbarco-CSharp\LotteryDisplayPOS\` mein `Install-WindowService.bat`, `Unistall-WindowService.bat`, `Disable-RunExeAsAdmin.Bat`, `Installation Guide.txt`, aur `LdFileProcessor\`, `LdPosService\` ke exe (2026-03-09 ke builds, matlab client pe abhi March wala code hai). Client steps: folder `C:\ProgramData\LotteryDisplayPOS` mein copy, UAC .bat, install .bat (service NetworkService pe banti hai, start nahi hoti), `LdPosService.exe` admin se, barcode se login (format `LDSS.430.06107801`), Browse Folder se `\\10.5.48.2\XMLGateway\BOOutBox`, popup "service started". Server side pehle Store Settings mein Pos Lottery Dept ID aur Pos Payout Dept ID.
+- Deployment package: `E:\Dropbox\LD shared\Debug App\POS-Gilbarco-CSharp\LotteryDisplayPOS\` mein `Install-WindowService.bat`, `Unistall-WindowService.bat`, `Disable-RunExeAsAdmin.Bat`, `Installation Guide.txt`, aur `LdFileProcessor\`, `LdPosService\` ke exe (2026-03-09 ke builds, matlab client pe abhi March wala code hai). Client steps: folder `C:\ProgramData\LotteryDisplayPOS` mein copy, UAC .bat, install .bat (service NetworkService pe banti hai, start nahi hoti), `LdPosService.exe` admin se, barcode se login (format `LDSS.430.06107801`), Browse Folder se `\\10.5.48.2\XMLGateway\BOOutBox`, popup "service started". Server side pehle Store Settings mein Pos Lottery Dept ID aur Pos Payout Dept ID. 2026-10-06 se Dropbox mein `updated-Install-WindowService.bat` bhi hai (crash recovery ke saath), aur yahi scripts repo ke `deploy\` folder mein versioned hain; aage se deploy folder repo se Dropbox mein copy hona chahiye, ulta nahi.
 
 ## Commits (sirf code; notes ke commits yahan nahi)
 
@@ -248,3 +250,5 @@ Pehli line: process crash ho to Windows 5s, 10s, 30s baad wapas chalaye, 24 ghan
 | 9b51aeb | 2026-10-06 | Initial commit, March 2026 production code |
 | 04597f3 | 2026-10-06 | Point 1 (+7): periodic upload retry, semaphore lock, break on first failure |
 | 27b1499 | 2026-10-06 | Point 4: TrySetupFileWatcher, keep-alive loop recreates watcher, 5-minute folder scan safety net |
+| e6e2af5 | 2026-10-06 | Point 4 refinement: periodic scan finds missed files -> recreate watcher |
+| 71ef215 | 2026-10-06 | deploy\: install .bat with sc failure + failureflag, uninstall, UAC .bat, Installation Guide |
