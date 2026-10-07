@@ -32,6 +32,7 @@ Yeh file har review point ka masla, discussion, faisla aur status rakhti hai. Ha
 | 16 | Server ka reject (4xx) aur network fail ek jaise treat; point 1 ke baad rejected row queue block kar sakti hai | Bara | CHOR DO (server 200 deta hai) | - |
 | 17 | LdOposService aur LdFileProcessor same log folder aur same file naam | Chhota | CHOR DO | - |
 | 18 | Mapped drive (Z:) service ko dikhta hi nahi, Dashboard usko accept kar leta hai | Bara | PENDING | |
+| 19 | Disable-RunExeAsAdmin.bat poori machine ka UAC prompt band karta hai | Darmiyana (deployment) | PENDING | |
 
 ## Points tafseel se
 
@@ -117,7 +118,11 @@ sc failure LdFileProcessor reset= 86400 actions= restart/5000/restart/10000/rest
 sc failureflag LdFileProcessor 1
 ```
 
-Pehli line: process crash ho to Windows 5s, 10s, 30s baad wapas chalaye, 24 ghante baad counter reset. Doosri: agar service crash ke bagair non-zero exit code se band ho (host ka unhandled error) to bhi wahi recovery lage. Yeh sirf us case ke liye hai jo code ke bahar hai (runtime/native crash); code ke andar ab koi raasta nahi jahan se process khud mare. FileProcessor ki .bat abhi repo mein nahi hai; repo ke `deploy\` folder mein daalni chahiye taake versioned rahe.
+Pehli line: process crash ho to Windows 5s, 10s, 30s baad wapas chalaye, 24 ghante baad counter reset. Doosri: agar service crash ke bagair non-zero exit code se band ho (host ka unhandled error) to bhi wahi recovery lage. Yeh sirf us case ke liye hai jo code ke bahar hai (runtime/native crash); code ke andar ab koi raasta nahi jahan se process khud mare.
+
+**Check kiya (2026-10-06):** FileProcessor ki asli .bat `E:\Dropbox\LD shared\Debug App\POS-Gilbarco-CSharp\LotteryDisplayPOS\Install-WindowService.bat` hai, 2026-02-02 ki. Usme `sc create` (line 46) aur `sc config obj= "NT AUTHORITY\NetworkService"` (line 56) hai, lekin **`sc failure` nahi hai**. Crash recovery abhi client pe set nahi hoti. Opos wali .bat (July) mein hai, yeh us se purani hai. Do lines upar wali `sc config` ke baad add karni hain, aur poora deploy folder repo ke `deploy\` mein copy hona chahiye taake versioned rahe. Faisla baaki.
+
+**Service account NetworkService hai, LocalSystem nahi.** Matlab: (a) mapped drive Z: isko bhi nahi dikhta, point 18 wahi rehta hai; (b) UNC share pe access NetworkService ki identity se hota hai, production mein chal raha hai to share isko allow karta hai; (c) `InitializeDatabase` ka ACL set karna service ke andar fail hoga (admin chahiye), lekin Dashboard admin se pehle chal ke folder aur ACL bana deta hai aur NetworkService BUILTIN\Users mein hai, to DB aur logs likhna chalta hai.
 
 ### 5. Auto-login token verify nahi karta — PENDING
 
@@ -134,6 +139,8 @@ Pehli line: process crash ho to Windows 5s, 10s, 30s baad wapas chalaye, 24 ghan
 **Masla:** `LoginForm.cs:42` `pos_dept_id` seedha DeptId mein. API na bheje to 0. Phir `FileMonitorService.cs:698` koi MerchandiseCode 0 se match nahi karega, saari files delete.
 
 **Fix idea:** Login response mein `pos_dept_id` 0 ya missing ho to login reject ya saaf warning.
+
+**Context (2026-10-06):** Installation Guide ka PRE REQUISITE yehi hai: Lottery Display App ke Store Settings mein "Pos Lottery Dept ID" aur "Pos Payout Dept ID" bharna. Koi bhool jaye to exactly yeh case banta hai, DeptId 0, saari files chup chaap delete. Fix wala warning us bhool ko install ke waqt hi pakad lega.
 
 ### 7. Network-error break wala code dead tha — DONE (point 1 ke saath)
 
@@ -216,6 +223,14 @@ Pehli line: process crash ho to Windows 5s, 10s, 30s baad wapas chalaye, 24 ghan
 
 **Fix idea:** Dashboard mein folder chunte waqt agar path drive letter se shuru ho aur woh network drive ho, to `WNetGetConnection` se UNC nikaal ke wohi save karo (`Z:\...` → `\\10.5.48.2\XMLGateway\...`). Local drive ho to jaise hai. Fallback: convert na ho sake to saaf message "network drive letter nahi, `\\server\share` path chuno".
 
+**Note (2026-10-06):** service NetworkService account pe chalti hai (install .bat line 56), usko bhi user ka Z: nahi dikhta, masla wahi hai. Installation Guide ka step 8 sahi tor pe UNC path `\\10.5.48.2\XMLGateway\BOOutBox` bolta hai, to jab tak client guide follow kare theek hai; fix us case ke liye hai jab koi Z: chun le.
+
+### 19. Disable-RunExeAsAdmin.bat poori machine ka UAC prompt band karta hai — PENDING (deployment)
+
+**Masla:** Installation Guide ka step 3 `Disable-RunExeAsAdmin.Bat` chalata hai, jo registry mein `ConsentPromptBehaviorAdmin = 0` set karta hai. Matlab us store PC pe har admin action bina UAC prompt ke chalega, sirf hamari app nahi, har program. Wajah samajh aati hai: `LdPosService.exe` ka manifest `requireAdministrator` hai (service start/stop aur ACL ke liye) aur client ko har baar prompt na dikhe.
+
+**Behtar raaste (koi ek):** app ko ek scheduled task ke zariye "Run with highest privileges" se chalao (install .bat ek baar task banaye, shortcut usko trigger kare, prompt nahi aata, UAC poori machine pe on rehta hai). Ya app admin ke bagair chale aur service control ka kaam ek chhota elevated helper kare. Deployment policy ka faisla hai, Moiez ka call.
+
 ## Background facts
 
 - Store mein 2 Gilbarco Passport terminals. Ek waqt mein max 2 XML files.
@@ -223,7 +238,8 @@ Pehli line: process crash ho to Windows 5s, 10s, 30s baad wapas chalaye, 24 ghan
 - Git: 2026-10-06 ko purana repo `POS-DesktopApp-C-` delete kar ke naya `LD-GilbarcoFileProcessor` banaya. `LdPosService` folder hi repo hai. `..\POS-DesktopApp-C` clone stale hai, wahan se push mat karo.
 - Publish: `FolderProfile.pubxml` → `C:\ProgramData\LotteryDisplayPOS\LdFileProcessor`, self-contained single-file win-x64. Yeh file gitignore mein hai (`*.pubxml`).
 - Runtime data: `C:\ProgramData\LdPosService\` mein `PosData.db`, `logs\service-YYYYMMDD.log`, `TempFiles\`.
-- Dev machine pe `C:\ProgramData\LdPosService\logs\` ke July 2026 logs ek doosri service ke hain (LdOposService: Verifone auth, CoreScanner barcode). Woh bhi same folder aur same `service-.log` naam use karti hai. Agar store machine pe dono services saath chalein to Serilog ka file sink ek waqt mein ek process ko hi file deta hai, doosri ke logs chup chaap gayab honge. Sawal: dono ek machine pe chalti hain?
+- Dev machine pe `C:\ProgramData\LdPosService\logs\` ke July 2026 logs ek doosri service ke hain (LdOposService: Verifone auth, CoreScanner barcode). Woh bhi same folder aur same `service-.log` naam use karti hai. Agar store machine pe dono services saath chalein to Serilog ka file sink ek waqt mein ek process ko hi file deta hai, doosri ke logs chup chaap gayab honge. Sawal: dono ek machine pe chalti hain? (Jawab: nahi, point 17.)
+- Deployment package: `E:\Dropbox\LD shared\Debug App\POS-Gilbarco-CSharp\LotteryDisplayPOS\` mein `Install-WindowService.bat`, `Unistall-WindowService.bat`, `Disable-RunExeAsAdmin.Bat`, `Installation Guide.txt`, aur `LdFileProcessor\`, `LdPosService\` ke exe (2026-03-09 ke builds, matlab client pe abhi March wala code hai). Client steps: folder `C:\ProgramData\LotteryDisplayPOS` mein copy, UAC .bat, install .bat (service NetworkService pe banti hai, start nahi hoti), `LdPosService.exe` admin se, barcode se login (format `LDSS.430.06107801`), Browse Folder se `\\10.5.48.2\XMLGateway\BOOutBox`, popup "service started". Server side pehle Store Settings mein Pos Lottery Dept ID aur Pos Payout Dept ID.
 
 ## Commits (sirf code; notes ke commits yahan nahi)
 
