@@ -88,7 +88,9 @@ Yeh file har review point ka masla, discussion, faisla aur status rakhti hai. Ha
 
 **Log mein kya dikhega:** "File watcher could not be started. Retrying in 00:00:30", "File watcher is down and folder path is not accessible" (har minute jab tak path wapas na aaye), "Folder path is accessible again ... Restarting file watcher", "FOLDER SCAN (startup|watcher recovery|periodic) START". Periodic scan ko kuch na mile to chup.
 
-**Deploy:** service dobara publish aur restart zaroori. Saath mein `sc failure` wala recovery set kar lo (neeche).
+**Deploy:** service dobara publish aur restart zaroori. Crash recovery Install .bat mein hai (neeche "Deployment" dekho), manual command nahi.
+
+**Ek bachi hui kami (optional refinement):** watcher bina Error event ke chup chaap mar jaye (Example C neeche) to service 5-minute polling mode mein chalti rehti hai, watcher dobara nahi banta jab tak restart na ho. Files aati rehti hain, bas 5 minute late. 5-line fix: periodic scan ko nayi files milein jo watcher ko milni chahiye thin, to watcher dobara bana do. Faisla baaki.
 
 **Pehle ka analysis aur plan, reference ke liye:**
 
@@ -108,7 +110,14 @@ Natija: start pe fail ho ya baad mein mare, dono case zyada se zyada 1 minute me
 
 **Optional step 5, silent death ke liye:** FileSystemWatcher network share pe kabhi bina `Error` event ke bhi mar jaata hai (Passport reboot, SMB session stale). Tab `_watcher` null nahi hota, step 4 usko nahi pakdega. Safety net: har 5 minute folder ka ek scan, sirf woh files process jo is run mein pehle nahi dekhi (in-memory list, restart pe khali). Yeh server dedupe nahi hai, bas ek run ke andar same file dobara na uthe. Point 8 ka rename wala case bhi isi se cover ho jaata hai.
 
-**Deployment tip (code nahi):** process khud crash ho jaye to Windows usko wapas chalaye: `sc failure LdFileProcessor reset= 86400 actions= restart/60000/restart/60000/restart/60000`. Ya services.msc mein Recovery tab, teeno pe "Restart the Service".
+**Deployment (code nahi), crash recovery:** client pe koi manual command nahi chalti, service `Install-WindowsService.bat` se lagti hai jo client admin ke tor pe chalata hai (Opos wali `C:\ProgramData\LotteryDisplayOPOS\Install-WindowsService.bat` isi pattern pe hai, usme line 77 pe `sc failure` pehle se hai). FileProcessor ki .bat mein `sc create` ke baad yeh do lines honi chahiye:
+
+```
+sc failure LdFileProcessor reset= 86400 actions= restart/5000/restart/10000/restart/30000
+sc failureflag LdFileProcessor 1
+```
+
+Pehli line: process crash ho to Windows 5s, 10s, 30s baad wapas chalaye, 24 ghante baad counter reset. Doosri: agar service crash ke bagair non-zero exit code se band ho (host ka unhandled error) to bhi wahi recovery lage. Yeh sirf us case ke liye hai jo code ke bahar hai (runtime/native crash); code ke andar ab koi raasta nahi jahan se process khud mare. FileProcessor ki .bat abhi repo mein nahi hai; repo ke `deploy\` folder mein daalni chahiye taake versioned rahe.
 
 ### 5. Auto-login token verify nahi karta — PENDING
 
