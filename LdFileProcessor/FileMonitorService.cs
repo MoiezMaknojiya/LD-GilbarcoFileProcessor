@@ -488,6 +488,18 @@ namespace LdFileProcessor
                 _logger.LogInformation("======================================== FOLDER SCAN ({reason}) START ========================================", reason);
                 _logger.LogInformation("Found {count} XML file(s) to process ({total} in folder).\n", newFiles.Count, xmlFiles.Length);
 
+                if (reason == "periodic")
+                {
+                    // The watcher should have reported these files. It has most likely died without raising an
+                    // Error event (POS reboot, stale SMB session). Recreate it so new files are seen immediately
+                    // again instead of only on the next scan. Recreating a healthy watcher is harmless.
+                    _logger.LogWarning("Periodic scan found {count} file(s) the watcher did not report. Recreating the file watcher.\n", newFiles.Count);
+                    if (!TrySetupFileWatcher())
+                    {
+                        _logger.LogWarning("File watcher could not be recreated now. The keep-alive loop will keep trying every {interval}.\n", UploadRetryInterval);
+                    }
+                }
+
                 // Step 1: Copy all files to temp folder
                 var copiedFiles = new List<string>();
 
