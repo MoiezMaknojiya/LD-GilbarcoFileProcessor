@@ -1,0 +1,92 @@
+----------------------------------------------------
+PRE REQUISITE
+----------------------------------------------------
+
+Inside Lottery Display App in Store Setting:
+- Please put "Pos Lottery Dept ID" And "Pos Payout Dept ID"
+
+----------------------------------------------------
+STEP 1 - DOWNLOAD LOTTERYDISPLAYPOS
+----------------------------------------------------
+
+Download the app files from:
+- https://www.dropbox.com/scl/fo/j43hk7sklarikcj0ycxqa/AIatjUcFbNkmUEoailvPngc/Debug%20App/PoS-Watcher-C%23?dl=0&rlkey=lktm5crs12jw5n6s99s4q6cwh&subfolder_nav_tracking=1
+
+----------------------------------------------------
+STEP 2 - EXTRACT FILES
+----------------------------------------------------
+
+1. Extract the downloaded ZIP/package.
+2. Move or copy the "LotteryDisplayPos" folder to: "C:\ProgramData"
+
+- Final folder path should be: "C:\ProgramData\LotteryDisplayPos"
+
+----------------------------------------------------
+STEP 3 - RUN Disable-RunExeAsAdmin.bat
+----------------------------------------------------
+
+1. Open the LotteryDisplayPos folder.
+2. Find: "Disable-RunExeAsAdmin.bat"
+3. Right-click the file.
+4. Hit: Run as Administrator
+
+----------------------------------------------------
+STEP 4 - INSTALL WINDOWS SERVICE
+----------------------------------------------------
+
+1. Find: Install-WindowService.bat
+2. Right-click the file.
+3. Hit: Run as Administrator
+
+This gonna install the Windows Service.
+
+----------------------------------------------------
+STEP 5 - RUN LdPosService.exe
+----------------------------------------------------
+
+1. Open the folder: LdPosService
+2. Find: LdPosService.exe
+3. Right-click the file.
+4. Hit: Run as Administrator
+
+----------------------------------------------------
+STEP 6 - INSTALL .NET 8 DESKTOP RUNTIME (IF NEEDED)
+----------------------------------------------------
+
+If the app asks for .NET 8 Desktop Runtime:
+
+Download from Microsoft:
+https://dotnet.microsoft.com/en-us/download/dotnet/8.0
+
+Install the runtime and restart the app.
+
+----------------------------------------------------
+STEP 7 - LOGIN USING BARCODE
+----------------------------------------------------
+
+1. Open:https://lotteryscreen.app/user/qr
+2. Copy your user barcode.
+   Example: LDSS.430.06107801
+
+3. Paste the barcode into the desktop app:
+   LdPosService.exe
+
+----------------------------------------------------
+STEP 8 - SELECT XML GATEWAY BOOUTBOX FOLDER
+----------------------------------------------------
+
+1. After login, click the "Browse Folder" button
+2. \\10.5.48.2\XMLGateway\BOOutBox
+3. Go to your XML Gateway directory.
+4. Pick the folder: BoOutBox
+
+----------------------------------------------------
+STEP 9 - VERIFY SERVICE CONNECTION
+----------------------------------------------------
+
+After selecting the BoOutBox folder:
+
+- A popup should show up saying
+  the Windows Service started successfully.
+- You can close the setup window now.
+- Test the integration by selling tickets.
