@@ -24,7 +24,7 @@ Yeh file har review point ka masla, discussion, faisla aur status rakhti hai. Ha
 | 8 | Watcher sirf Created event sunta hai | Darmiyana | CHOR DO (Gilbarco sirf Created karta hai) | - |
 | 9 | Service mein Console.WriteLine | Darmiyana | PENDING | |
 | 10 | Login JSON haath se jora hua | Darmiyana | PENDING | |
-| 11 | Retry comment aur code alag | Darmiyana | PENDING | |
+| 11 | Retry comment aur code alag | Darmiyana | DONE | 629989f |
 | 12 | Nested form chain | Chhota | PENDING | |
 | 13 | UI freeze, WaitForStatus UI thread pe | Chhota | PENDING | |
 | 14 | UNC path pe sync Directory.Exists | Chhota | PENDING | |
@@ -180,6 +180,8 @@ Pehli line: process crash ho to Windows 5s, 10s, 30s baad wapas chalaye, 24 ghan
 
 **Recommendation:** 35 second theek hai (Passport likhne mein kam waqt leta hai, Modisoft bhi padhte waqt thodi der lock rakh sakta hai, 5 second kam the isi liye badhaye gaye honge). Fix: do constants `LockRetryCount = 50` aur `LockRetryDelay = 700ms`, loop aur dono log messages unhi se number lein, taake dobara kabhi drift na ho. Saath mein: ab agar 35 second baad bhi locked ho to file skip hoti hai lekin khoti nahi, point 4 ka 5-minute scan usko dobara uthata hai kyunke woh handled list mein nahi gayi. Faisla baaki: 35 second rakhna hai ya koi aur number?
 
+**Faisla (Moiez, 2026-10-07): 30 second.** DONE, commit 629989f. `FileMonitorService.cs` line 63: `LockRetryCount = 60`, `LockRetryDelay = 500ms`, 60 x 500ms = 30 second. Loop (line 343) aur dono log messages ab inhi constants se number lete hain, "retrying in 500ms (7/60)" aur "still locked after 60 retries (30s). Skipping for now; the periodic folder scan will pick it up". Number badalna ho to sirf constants.
+
 ### 12. Nested form chain — PENDING
 
 **Masla:** `LoginForm.cs:50` aur `DashboardForm.cs:43` dono `ShowDialog` nested chalate hain. Login, Dashboard, phir naya Login, naya Dashboard. Har logout/login pe ek hidden form stack pe baitha rehta hai jab tak app band na ho.
@@ -285,3 +287,4 @@ Pehli line: process crash ho to Windows 5s, 10s, 30s baad wapas chalaye, 24 ghan
 | 71ef215 | 2026-10-06 | deploy\: install .bat with sc failure + failureflag, uninstall, UAC .bat, Installation Guide |
 | 6e49536 | 2026-10-07 | Point 15: dead code, Dapper, IsProcessed column, Serilog.AspNetCore, duplicate icon in resx |
 | 96bdd78 | 2026-10-07 | Point 18: Dashboard converts mapped drive letter to UNC before saving (WNetGetConnection) |
+| 629989f | 2026-10-07 | Point 11: lock wait 60 x 500ms = 30s via constants, log text derived from them |
