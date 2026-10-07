@@ -57,6 +57,11 @@ namespace LdFileProcessor
         // picked up by the watcher or by the next scan.
         private static readonly TimeSpan ScanSettleTime = TimeSpan.FromSeconds(10);
 
+        // How long a new file may stay locked by the POS before it is skipped: LockRetryCount x LockRetryDelay
+        // (60 x 500ms = 30 seconds). A skipped file is not lost, the periodic folder scan picks it up later.
+        private const int LockRetryCount = 60;
+        private static readonly TimeSpan LockRetryDelay = TimeSpan.FromMilliseconds(500);
+
         public FileMonitorService(ILogger<FileMonitorService> logger, XmlJsonConverter xmlJsonConverter, FileUtilities fileUtilities, ApiServices apiService)
         {
             _logger = logger;
@@ -334,18 +339,20 @@ namespace LdFileProcessor
                 _logger.LogInformation("======================================== NEW FILE DETECTED ========================================");
                 _logger.LogInformation("File detected: {file}.\n", fullPath);
 
-                // Wait until the file is released by the POS system (retry up to 10 times, 500ms apart = 5s max)
+                // Wait until the file is released by the POS system (up to LockRetryCount x LockRetryDelay)
+                int delayMs = (int)LockRetryDelay.TotalMilliseconds;
                 int retries = 0;
-                while (_fileUtilities.IsFileLocked(fullPath) && retries < 50)
+                while (_fileUtilities.IsFileLocked(fullPath) && retries < LockRetryCount)
                 {
-                    _logger.LogWarning("File is still in use, retrying in 500ms ({retry}/10): {file}.\n", retries + 1, fullPath);
-                    await Task.Delay(700);
+                    _logger.LogWarning("File is still in use, retrying in {delayMs}ms ({retry}/{max}): {file}.\n", delayMs, retries + 1, LockRetryCount, fullPath);
+                    await Task.Delay(LockRetryDelay);
                     retries++;
                 }
 
                 if (_fileUtilities.IsFileLocked(fullPath))
                 {
-                    _logger.LogError("File is still locked after 10 retries. Skipping: {file}.\n", fullPath);
+                    _logger.LogError("File is still locked after {max} retries ({seconds}s). Skipping for now; the periodic folder scan will pick it up: {file}.\n",
+                        LockRetryCount, (int)(LockRetryCount * LockRetryDelay.TotalSeconds), fullPath);
                     return;
                 }
 
