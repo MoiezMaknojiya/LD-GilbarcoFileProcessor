@@ -22,8 +22,8 @@ Yeh file har review point ka masla, discussion, faisla aur status rakhti hai. Ha
 | 6 | DeptId 0 ka risk | Bara | PENDING | |
 | 7 | Network-error break wala code dead tha | Darmiyana | DONE (point 1 ke saath) | 04597f3 |
 | 8 | Watcher sirf Created event sunta hai | Darmiyana | CHOR DO (Gilbarco sirf Created karta hai) | - |
-| 9 | Service mein Console.WriteLine | Darmiyana | PENDING | |
-| 10 | Login JSON haath se jora hua | Darmiyana | PENDING | |
+| 9 | Service mein Console.WriteLine | Darmiyana | DONE | 082929d |
+| 10 | Login JSON haath se jora hua | Darmiyana | DONE (9 ke saath) | 082929d |
 | 11 | Retry comment aur code alag | Darmiyana | DONE | 629989f |
 | 12 | Nested form chain | Chhota | PENDING | |
 | 13 | UI freeze, WaitForStatus UI thread pe | Chhota | PENDING | |
@@ -164,11 +164,24 @@ Pehli line: process crash ho to Windows 5s, 10s, 30s baad wapas chalaye, 24 ghan
 
 **Fix idea:** ApiLibrary mein `Microsoft.Extensions.Logging.Abstractions` ka `ILogger` inject karna, ya jaise `XmlJsonConverter` karta hai, `Action<string>` log callbacks.
 
+**DONE (Moiez: "point 9 karo, dekh lena sab sahi se log ho", 2026-10-07, commit 082929d):**
+- `ApiLibrary` mein `Microsoft.Extensions.Logging.Abstractions` 10.0.2 (wahi version jo worker ke Hosting 10.0.2 ke saath aata hai).
+- `ApiServices.cs` poora dobara likha. Constructor `ILogger<ApiServices>?` leta hai: worker mein DI khud Serilog wala logger de deta hai (`AddSingleton<ApiServices>` pehle se tha, kuch badalna nahi pada), WinForms app `new ApiServices()` chalati rehti hai, wahan NullLogger, kyunke app MessageBox dikhati hai.
+- Har fail ab wajah ke saath log hoti hai: HTTP status, reason aur response body (500 chars tak), ya timeout, ya exception. Pehle upload fail pe server ka jawab padha hi nahi jaata tha, log mein sirf "Failed to upload transaction N" aata tha. Ab "Upload rejected: HTTP 422 Unprocessable Content. Response: {...}" jaisa aayega, ya "Upload failed: no response within 00:00:30", ya "Upload failed: network error: No such host is known".
+- Login success/fail aur logout success/fail bhi log hote hain (user id, store, dept). Token aur UUID kabhi log nahi hote. Upload success sirf Debug level pe (service khud per transaction "uploaded successfully" likhti hai, shor nahi chahiye).
+- `DatabaseServices.InitializeDatabase(ILogger? logger = null)`: DB ka path aur folder permissions ka nateeja log mein (teen purani Console lines). `FileMonitorService` apna logger pass karta hai; WinForms app bina logger ke call karti hai, pehle jaisa.
+- Database ke wrapped exceptions ab `InnerException` rakhte hain, to log mein asli SQLite error aur stack dikhta hai, sirf message nahi.
+- Baaki jo pehle se theek tha woh waisa hi: `XmlJsonConverter` aur `FileUtilities` callbacks se FileMonitorService ke logger mein likhte hain, Serilog file `C:\ProgramData\LdPosService\logs\service-YYYYMMDD.log`, daily rolling, 30 din, Information level, `{Exception}` template mein shamil.
+
+**Test:** build pass. Live run nahi kiya, kyunke is machine ki DB mein shayad asli user/token ho aur service production pe upload kar deti. Naye build ke pehle start pe log mein yeh lines dikhni chahiye: "Database file: C:\ProgramData\LdPosService\PosData.db", "Folder permissions set..." ya "Could not set folder permissions..." warning, phir "File watcher started for UNC network path".
+
 ### 10. Login JSON haath se jora hua — PENDING
 
 **Masla:** `ApiServices.cs:36` string interpolation se JSON. UUID mein quote ya backslash aaye to request toot jaye.
 
 **Fix:** `JsonConvert.SerializeObject(new { uuid })`. Ek line.
+
+**DONE (2026-10-07, commit 082929d, point 9 ke saath):** `ApiServices.LoginAsync` dobara likhte waqt yahi ek line daal di, string jodna khatam. Alag se poochha nahi kyunke fix pehle se agreed tha aur usi method mein tha.
 
 ### 11. Retry comment aur code alag — PENDING
 
@@ -288,3 +301,4 @@ Pehli line: process crash ho to Windows 5s, 10s, 30s baad wapas chalaye, 24 ghan
 | 6e49536 | 2026-10-07 | Point 15: dead code, Dapper, IsProcessed column, Serilog.AspNetCore, duplicate icon in resx |
 | 96bdd78 | 2026-10-07 | Point 18: Dashboard converts mapped drive letter to UNC before saving (WNetGetConnection) |
 | 629989f | 2026-10-07 | Point 11: lock wait 60 x 500ms = 30s via constants, log text derived from them |
+| 082929d | 2026-10-07 | Point 9 (+10): ILogger in ApiLibrary, HTTP status/body logged on failures, inner exceptions kept, login JSON serialized |
