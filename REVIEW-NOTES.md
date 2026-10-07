@@ -21,14 +21,14 @@ Yeh file har review point ka masla, discussion, faisla aur status rakhti hai. Ha
 | 5 | Auto-login token verify nahi karta | Bara | CHOR DO (token kabhi expire nahi hota) | - |
 | 6 | DeptId 0 ka risk | Bara | PENDING | |
 | 7 | Network-error break wala code dead tha | Darmiyana | DONE (point 1 ke saath) | 04597f3 |
-| 8 | Watcher sirf Created event sunta hai | Darmiyana | PENDING | |
+| 8 | Watcher sirf Created event sunta hai | Darmiyana | CHOR DO (Gilbarco sirf Created karta hai) | - |
 | 9 | Service mein Console.WriteLine | Darmiyana | PENDING | |
 | 10 | Login JSON haath se jora hua | Darmiyana | PENDING | |
 | 11 | Retry comment aur code alag | Darmiyana | PENDING | |
 | 12 | Nested form chain | Chhota | PENDING | |
 | 13 | UI freeze, WaitForStatus UI thread pe | Chhota | PENDING | |
 | 14 | UNC path pe sync Directory.Exists | Chhota | PENDING | |
-| 15 | Dead code aur faltu saaman | Chhota | PENDING | |
+| 15 | Dead code aur faltu saaman | Chhota | DONE | 6e49536 |
 | 16 | Server ka reject (4xx) aur network fail ek jaise treat; point 1 ke baad rejected row queue block kar sakti hai | Bara | CHOR DO (server 200 deta hai) | - |
 | 17 | LdOposService aur LdFileProcessor same log folder aur same file naam | Chhota | CHOR DO | - |
 | 18 | Mapped drive (Z:) service ko dikhta hi nahi, Dashboard usko accept kar leta hai | Bara | PENDING | |
@@ -156,6 +156,8 @@ Pehli line: process crash ho to Windows 5s, 10s, 30s baad wapas chalaye, 24 ghan
 
 **Fix idea:** `Renamed` event bhi sunna. Parse fail pe ek baar 1-2 second baad dobara copy aur parse try karna (partial write ka case).
 
+**Faisla (Moiez, 2026-10-07): CHOR DO.** Gilbarco Passport BOOutBox mein file seedha create karta hai, rename nahi, to `Created` kaafi hai. Partial write ka risk pehle se lock-check (35 second) se aur ab scan ke 10-second settle time se cover hai.
+
 ### 9. Service mein Console.WriteLine — PENDING
 
 **Masla:** `ApiServices.cs` lines 105, 125, 130, 135, 140, 145 aur `DatabaseServices.cs` lines 46, 50, 54 `Console.WriteLine` use karti hain. Windows service mein console nahi, yeh logs gayab. Upload fail kyun hui, pata hi nahi chalta.
@@ -190,8 +192,22 @@ Pehli line: process crash ho to Windows 5s, 10s, 30s baad wapas chalaye, 24 ghan
 
 **Masla:** `FileMonitorService.cs:772` `Directory.Exists` network path pe sync hai. Network down ho to yeh call kaafi der latak sakti hai. Chhota masla.
 
-### 15. Dead code aur faltu saaman — PENDING
+### 15. Dead code aur faltu saaman — DONE (6e49536)
 
+**Kya badla (2026-10-07):**
+- `Dapper` package hata diya.
+- `DatabaseServices`: `GetDatabasePath`, `GetUserByUUID`, `GetUserFolderPath` hata diye, aur `LoginForm_Load` ki commented debug line bhi.
+- `Transactions.IsProcessed` column schema, insert, select aur count se nikaal diya. Purani DBs mein column reh jayega (default 0 hai, insert mein na ho to bhi chalta hai), nayi DBs bina column ke banengi. `Transaction` model se bhi property gayi.
+- `FileUtilities.DeleteFile` ka `logWarning` param gaya, saat call sites update.
+- Models ki 5 faltu `using` lines (template ki) hata di, ImplicitUsings pehle se on hai.
+- `Serilog.AspNetCore` ki jagah `Serilog.Extensions.Hosting` 10.0.0, wahi jo `UseSerilog()` ke liye chahiye. ASP.NET Core ke packages ab nahi aate.
+- Worker `Program.cs` ka commented template code gaya. `FileMonitorService` ka stale "internet check" comment theek.
+- `DashboardForm` ka `_storeId` field aur constructor param gaya, `LoginForm` ke dono call sites update.
+- Icon: dono forms ab exe se icon uthate hain (`Icon.ExtractAssociatedIcon(Application.ExecutablePath)`), constructor mein ek line. Dono `.resx` 3119 lines se 119 lines ke template pe wapas, `Designer.cs` se `resources` aur `Icon =` lines gayi. Build ke baad check: resx valid XML, BOM sab jagah preserved.
+
+**Jaan ke nahi badla:** do alag ProgramData folders (publish `LotteryDisplayPOS`, DB/logs `LdPosService`). Data folder badalne se purani installs ki DB aur logs ka raasta toot jaata, aur publish folder install .bat mein hardcoded hai. Faida koi nahi, risk hai. Aise hi rehne do.
+
+**Purani list, reference ke liye:**
 - `Dapper` package `ApiLibrary.csproj` mein, kahin use nahi
 - `DatabaseServices`: `GetUserByUUID`, `GetUserFolderPath`, `GetDatabasePath` koi call nahi karta
 - `Transactions.IsProcessed` column hamesha 0, successful rows delete hoti hain
@@ -227,6 +243,8 @@ Pehli line: process crash ho to Windows 5s, 10s, 30s baad wapas chalaye, 24 ghan
 
 **Note (2026-10-06):** service NetworkService account pe chalti hai (install .bat line 56), usko bhi user ka Z: nahi dikhta, masla wahi hai. Installation Guide ka step 8 sahi tor pe UNC path `\\10.5.48.2\XMLGateway\BOOutBox` bolta hai, to jab tak client guide follow kare theek hai; fix us case ke liye hai jab koi Z: chun le.
 
+**Moiez ka sawal (2026-10-07): dono pe nahi chal sakta?** Jawab: haan, user ke liye dono chal sakte hain, lekin service ke liye sirf UNC chalega, yeh Windows ka rule hai, code se nahi badalta. Drive letter us user ke logon session ki cheez hai; service alag session (session 0) mein alag account (NetworkService) pe chalti hai, uske liye `Z:` exist hi nahi karta. Isliye "dono" ka matlab yeh banta hai: Dashboard dono accept kare, user Z: chune ya `\\10.5.48.2\...`, lekin save hone se pehle Z: ko uske asli UNC mein badal de (`WNetGetConnection` Windows API, drive letter do, share ka UNC milta hai). DB mein hamesha UNC jaye, service ko Z: kabhi dikhe hi nahi. Local drive (C:, D:) ho to jaise hai. Mapped drive disconnected ho aur convert na ho sake to saaf message "yeh network drive hai, `\\server\share` wala path chuno". Dashboard mein ek chhota method, service mein kuch nahi. Faisla baaki.
+
 ### 19. Disable-RunExeAsAdmin.bat poori machine ka UAC prompt band karta hai — PENDING (deployment)
 
 **Masla:** Installation Guide ka step 3 `Disable-RunExeAsAdmin.Bat` chalata hai, jo registry mein `ConsentPromptBehaviorAdmin = 0` set karta hai. Matlab us store PC pe har admin action bina UAC prompt ke chalega, sirf hamari app nahi, har program. Wajah samajh aati hai: `LdPosService.exe` ka manifest `requireAdministrator` hai (service start/stop aur ACL ke liye) aur client ko har baar prompt na dikhe.
@@ -252,3 +270,4 @@ Pehli line: process crash ho to Windows 5s, 10s, 30s baad wapas chalaye, 24 ghan
 | 27b1499 | 2026-10-06 | Point 4: TrySetupFileWatcher, keep-alive loop recreates watcher, 5-minute folder scan safety net |
 | e6e2af5 | 2026-10-06 | Point 4 refinement: periodic scan finds missed files -> recreate watcher |
 | 71ef215 | 2026-10-06 | deploy\: install .bat with sc failure + failureflag, uninstall, UAC .bat, Installation Guide |
+| 6e49536 | 2026-10-07 | Point 15: dead code, Dapper, IsProcessed column, Serilog.AspNetCore, duplicate icon in resx |
