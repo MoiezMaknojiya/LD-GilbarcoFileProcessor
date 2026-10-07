@@ -28,7 +28,6 @@
         /// </summary>
         private void InitializeComponent()
         {
-            System.ComponentModel.ComponentResourceManager resources = new System.ComponentModel.ComponentResourceManager(typeof(LoginForm));
             txtUUID = new TextBox();
             btnLogin = new Button();
             SuspendLayout();
@@ -58,7 +57,6 @@
             ClientSize = new Size(252, 115);
             Controls.Add(btnLogin);
             Controls.Add(txtUUID);
-            Icon = (Icon)resources.GetObject("$this.Icon");
             Name = "LoginForm";
             StartPosition = FormStartPosition.CenterScreen;
             Text = "Login";

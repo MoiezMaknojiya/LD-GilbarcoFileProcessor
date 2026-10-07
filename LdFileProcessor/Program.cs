@@ -55,10 +55,3 @@ finally
 {
     Log.CloseAndFlush();
 }
-
-
-//var builder = Host.CreateApplicationBuilder(args);
-//builder.Services.AddHostedService<FileMonitorService>();
-
-//var host = builder.Build();
-//host.Run();

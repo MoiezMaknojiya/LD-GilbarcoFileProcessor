@@ -13,7 +13,7 @@ namespace LdFileProcessor
         // SERVICES & UTILITIES
         private readonly ILogger<FileMonitorService> _logger;           // For logging errors and info
         private readonly DatabaseServices _dbHelper;                    // For database operations
-        private readonly ApiServices _apiService;                       // For API calls (upload, internet check)
+        private readonly ApiServices _apiService;                       // For API calls (upload)
         private readonly XmlJsonConverter _xmlJsonConverter;            // Converts XML to JSON
         private readonly FileUtilities _fileUtilities;                  // File helper methods
         private FileSystemWatcher? _watcher;                           // Watches folder for new files
@@ -584,7 +584,7 @@ namespace LdFileProcessor
                 if (_currentUser == null)
                 {
                     _logger.LogWarning("No current user found. Skipping transaction processing.\n");
-                    _fileUtilities.DeleteFile(filePath, msg => _logger.LogWarning(msg), msg => _logger.LogError(msg), msg => _logger.LogInformation(msg));
+                    _fileUtilities.DeleteFile(filePath, msg => _logger.LogError(msg), msg => _logger.LogInformation(msg));
                     _logger.LogInformation("======================================== FILE PROCESS END ========================================\n");
                     return;
                 }
@@ -602,7 +602,7 @@ namespace LdFileProcessor
                 catch (Exception ex)
                 {
                     _logger.LogError(ex, "Error parsing XML file: {fileName}.\n\n", fileName);
-                    _fileUtilities.DeleteFile(filePath, msg => _logger.LogWarning(msg), msg => _logger.LogError(msg), msg => _logger.LogInformation(msg));
+                    _fileUtilities.DeleteFile(filePath, msg => _logger.LogError(msg), msg => _logger.LogInformation(msg));
                     _logger.LogInformation("======================================== FILE PROCESS END ========================================\n");
                     return;
                 }
@@ -614,7 +614,7 @@ namespace LdFileProcessor
                 if (!hasMatchingDeptId)
                 {
                     _logger.LogInformation("File {fileName} does not contain MerchandiseCode matching DeptId {deptId}.\n", fileName, userDeptId);
-                    _fileUtilities.DeleteFile(filePath, msg => _logger.LogWarning(msg), msg => _logger.LogError(msg), msg => _logger.LogInformation(msg));
+                    _fileUtilities.DeleteFile(filePath, msg => _logger.LogError(msg), msg => _logger.LogInformation(msg));
                     _logger.LogInformation("======================================== FILE PROCESS END ========================================\n");
                     return;
                 }
@@ -631,7 +631,7 @@ namespace LdFileProcessor
                 if (string.IsNullOrWhiteSpace(jsonContent) || jsonContent == "{}")
                 {
                     _logger.LogWarning("Failed to convert XML to JSON for file: {file}.\n", fileName);
-                    _fileUtilities.DeleteFile(filePath, msg => _logger.LogWarning(msg), msg => _logger.LogError(msg), msg => _logger.LogInformation(msg));
+                    _fileUtilities.DeleteFile(filePath, msg => _logger.LogError(msg), msg => _logger.LogInformation(msg));
                     _logger.LogInformation("======================================== FILE PROCESS END ========================================\n");
                     return;
                 }
@@ -641,7 +641,7 @@ namespace LdFileProcessor
                 if (transactionId == 0)
                 {
                     // Transaction ID not found or invalid - delete file and skip
-                    _fileUtilities.DeleteFile(filePath, msg => _logger.LogWarning(msg), msg => _logger.LogError(msg), msg => _logger.LogInformation(msg));
+                    _fileUtilities.DeleteFile(filePath, msg => _logger.LogError(msg), msg => _logger.LogInformation(msg));
                     _logger.LogInformation("======================================== FILE PROCESS END ========================================\n");
                     return;
                 }
@@ -652,7 +652,7 @@ namespace LdFileProcessor
                 _logger.LogInformation("File processed and saved to database: {fileName}.\n", fileName);
 
                 // Step 11: Delete temp file (data is safely in database now)
-                _fileUtilities.DeleteFile(filePath, msg => _logger.LogWarning(msg), msg => _logger.LogError(msg), msg => _logger.LogInformation(msg));
+                _fileUtilities.DeleteFile(filePath, msg => _logger.LogError(msg), msg => _logger.LogInformation(msg));
 
                 // Step 12: Try to upload immediately
                 await UploadUnprocessedTransactionsAsync(_currentUser);
@@ -663,7 +663,7 @@ namespace LdFileProcessor
             {
                 // Catch any unexpected errors - log and delete temp file
                 _logger.LogError(ex, "Error processing file: {filePath}.\n\n", filePath);
-                _fileUtilities.DeleteFile(filePath, msg => _logger.LogWarning(msg), msg => _logger.LogError(msg), msg => _logger.LogInformation(msg));
+                _fileUtilities.DeleteFile(filePath, msg => _logger.LogError(msg), msg => _logger.LogInformation(msg));
                 _logger.LogInformation("======================================== FILE PROCESS END ========================================\n");
             }
         }

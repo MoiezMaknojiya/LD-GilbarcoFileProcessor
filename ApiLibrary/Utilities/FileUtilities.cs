@@ -17,7 +17,7 @@
             }
         }
 
-        public void DeleteFile(string filePath, Action<string> logWarning, Action<string> logError, Action<string> logInfo)
+        public void DeleteFile(string filePath, Action<string> logError, Action<string> logInfo)
         {
             try
             {

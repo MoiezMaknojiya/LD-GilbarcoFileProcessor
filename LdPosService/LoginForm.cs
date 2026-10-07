@@ -11,6 +11,7 @@ namespace LdPosService
         public LoginForm()
         {
             InitializeComponent();
+            Icon = System.Drawing.Icon.ExtractAssociatedIcon(Application.ExecutablePath);  // app icon comes from the exe, nothing embedded in the .resx
             _dbHelper = new DatabaseServices();
             _apiService = new ApiServices();
         }
@@ -44,7 +45,7 @@ namespace LdPosService
                     };
 
                     _dbHelper.AddUser(user);
-                    DashboardForm dashboard = new DashboardForm(loginResponse.user.id, loginResponse.user.username ?? "", loginResponse.accessToken ?? "", loginResponse.store_id);
+                    DashboardForm dashboard = new DashboardForm(loginResponse.user.id, loginResponse.user.username ?? "", loginResponse.accessToken ?? "");
 
                     this.Hide();
                     dashboard.ShowDialog();
@@ -65,8 +66,6 @@ namespace LdPosService
 
         private void LoginForm_Load(object sender, EventArgs e)
         {
-            //MessageBox.Show(DatabaseServices.GetDatabasePath());
-            
             // Initialize database
             DatabaseServices.InitializeDatabase();
 
@@ -80,8 +79,7 @@ namespace LdPosService
                     DashboardForm dashboard = new DashboardForm(
                         hasUser.UUID,
                         hasUser.Username ?? "",
-                        hasUser.AccessToken ?? "",
-                        hasUser.StoreId
+                        hasUser.AccessToken ?? ""
                     );
 
                     this.Hide();

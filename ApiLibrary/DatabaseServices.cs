@@ -83,7 +83,6 @@ namespace ApiLibrary
                         TransId INTEGER NOT NULL UNIQUE,
                         FileName TEXT NOT NULL,
                         TransJson TEXT NOT NULL,
-                        IsProcessed INTEGER NOT NULL DEFAULT 0,
                         CreatedAt TEXT NOT NULL
                     );";
 
@@ -96,11 +95,6 @@ namespace ApiLibrary
                     command.ExecuteNonQuery();
                 }
             }
-        }
-
-        public static string GetDatabasePath()
-        {
-            return dbPath;
         }
 
         public void AddUser(User user)
@@ -131,46 +125,6 @@ namespace ApiLibrary
             catch (Exception ex)
             {
                 throw new Exception($"Failed to add user: {ex.Message}");
-            }
-        }
-
-        public User? GetUserByUUID(int uuid)
-        {
-            try
-            {
-                using (var connection = GetConnection())
-                {
-                    connection.Open();
-                    string query = "SELECT * FROM User WHERE UUID = @UUID";
-
-                    using (var command = new SQLiteCommand(query, connection))
-                    {
-                        command.Parameters.AddWithValue("@UUID", uuid);
-                        using (var reader = command.ExecuteReader())
-                        {
-                            if (reader.Read())
-                            {
-                                return new User
-                                {
-                                    Id = reader.GetInt32(0),
-                                    UUID = reader.GetInt32(1),
-                                    Username = reader.IsDBNull(2) ? null : reader.GetString(2),
-                                    Email = reader.IsDBNull(3) ? null : reader.GetString(3),
-                                    FolderPath = reader.IsDBNull(4) ? null : reader.GetString(4),
-                                    AccessToken = reader.IsDBNull(5) ? null : reader.GetString(5),
-                                    StoreId = reader.GetInt32(6),
-                                    DeptId = reader.GetInt32(7),
-                                    LoginTime = reader.IsDBNull(8) ? null : reader.GetString(8)
-                                };
-                            }
-                        }
-                    }
-                }
-                return null;
-            }
-            catch (Exception ex)
-            {
-                throw new Exception($"Failed to get user: {ex.Message}");
             }
         }
 
@@ -240,37 +194,6 @@ namespace ApiLibrary
             }
         }
 
-        // CHANGED: Method name from GetUserNetworkPath to GetUserFolderPath
-        public string? GetUserFolderPath(int uuid)
-        {
-            try
-            {
-                using (var connection = GetConnection())
-                {
-                    connection.Open();
-                    // CHANGED: Column name from NetworkPath to FolderPath in SELECT statement
-                    string query = "SELECT FolderPath FROM User WHERE UUID = @UUID";
-
-                    using (var command = new SQLiteCommand(query, connection))
-                    {
-                        command.Parameters.AddWithValue("@UUID", uuid);
-                        using (var reader = command.ExecuteReader())
-                        {
-                            if (reader.Read())
-                            {
-                                return reader.IsDBNull(0) ? null : reader.GetString(0);
-                            }
-                        }
-                    }
-                }
-                return null;
-            }
-            catch (Exception ex)
-            {
-                throw new Exception($"Failed to get folder path: {ex.Message}");
-            }
-        }
-
         public void AddTransaction(int transId, string? fileName, string? transJson)
         {
             try
@@ -279,8 +202,8 @@ namespace ApiLibrary
                 {
                     connection.Open();
                     string query = @"
-                            INSERT OR IGNORE INTO Transactions (TransId, FileName, TransJson, CreatedAt, IsProcessed)
-                            VALUES (@TransId, @FileName, @TransJson, @CreatedAt, @IsProcessed)";
+                            INSERT OR IGNORE INTO Transactions (TransId, FileName, TransJson, CreatedAt)
+                            VALUES (@TransId, @FileName, @TransJson, @CreatedAt)";
 
                     using (var command = new SQLiteCommand(query, connection))
                     {
@@ -288,7 +211,6 @@ namespace ApiLibrary
                         command.Parameters.AddWithValue("@FileName", fileName ?? "");
                         command.Parameters.AddWithValue("@TransJson", transJson ?? "");
                         command.Parameters.AddWithValue("@CreatedAt", DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"));
-                        command.Parameters.AddWithValue("@IsProcessed", 0);
                         command.ExecuteNonQuery();
                     }
                 }
@@ -366,7 +288,7 @@ namespace ApiLibrary
                 using (var connection = GetConnection())
                 {
                     connection.Open();
-                    string query = "SELECT COUNT(*) FROM Transactions WHERE IsProcessed = 0";
+                    string query = "SELECT COUNT(*) FROM Transactions";
 
                     using (var command = new SQLiteCommand(query, connection))
                     {
@@ -388,7 +310,7 @@ namespace ApiLibrary
                 using (var connection = GetConnection())
                 {
                     connection.Open();
-                    string query = "SELECT TransId, FileName, TransJson, CreatedAt, IsProcessed FROM Transactions WHERE IsProcessed = 0";
+                    string query = "SELECT TransId, FileName, TransJson, CreatedAt FROM Transactions";
 
                     using (var command = new SQLiteCommand(query, connection))
                     using (var reader = command.ExecuteReader())
@@ -400,8 +322,7 @@ namespace ApiLibrary
                                 TransId = reader.IsDBNull(0) ? 0 : Convert.ToInt32(reader.GetValue(0)),
                                 FileName = reader.IsDBNull(1) ? null : reader.GetValue(1)?.ToString(),
                                 Json = reader.IsDBNull(2) ? null : reader.GetValue(2)?.ToString(),
-                                CreatedAt = reader.IsDBNull(3) ? null : reader.GetValue(3)?.ToString(),
-                                IsProcessed = reader.IsDBNull(4) ? 0 : Convert.ToInt32(reader.GetValue(4))
+                                CreatedAt = reader.IsDBNull(3) ? null : reader.GetValue(3)?.ToString()
                             });
                         }
                     }

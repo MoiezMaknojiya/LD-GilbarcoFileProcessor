@@ -28,7 +28,6 @@
         /// </summary>
         private void InitializeComponent()
         {
-            System.ComponentModel.ComponentResourceManager resources = new System.ComponentModel.ComponentResourceManager(typeof(DashboardForm));
             lblWelcome = new Label();
             btnLogout = new Button();
             btnBrowseFolder = new Button();
@@ -71,7 +70,6 @@
             Controls.Add(btnBrowseFolder);
             Controls.Add(btnLogout);
             Controls.Add(lblWelcome);
-            Icon = (Icon)resources.GetObject("$this.Icon");
             Name = "DashboardForm";
             StartPosition = FormStartPosition.CenterScreen;
             Text = "Dashboard";

@@ -8,18 +8,17 @@ namespace LdPosService
         private readonly int _uuid;
         private readonly string _userName;
         private readonly string _accessToken;
-        private readonly int _storeId;
         private readonly DatabaseServices _dbHelper;
         private readonly ApiServices _apiService;
         private const string ServiceName = "LdFileProcessor";
 
-        public DashboardForm(int uuid, string userName, string accessToken, int storeId)
+        public DashboardForm(int uuid, string userName, string accessToken)
         {
             InitializeComponent();
+            Icon = System.Drawing.Icon.ExtractAssociatedIcon(Application.ExecutablePath);  // app icon comes from the exe, nothing embedded in the .resx
             _uuid = uuid;
             _userName = userName;
             _accessToken = accessToken;
-            _storeId = storeId;
             _dbHelper = new DatabaseServices();
             _apiService = new ApiServices();
         }
