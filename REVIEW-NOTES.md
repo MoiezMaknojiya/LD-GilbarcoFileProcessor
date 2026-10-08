@@ -32,7 +32,7 @@ Yeh file har review point ka masla, discussion, faisla aur status rakhti hai. Ha
 | 16 | Server ka reject (4xx) aur network fail ek jaise treat; point 1 ke baad rejected row queue block kar sakti hai | Bara | CHOR DO (server 200 deta hai) | - |
 | 17 | LdOposService aur LdFileProcessor same log folder aur same file naam | Chhota | CHOR DO | - |
 | 18 | Mapped drive (Z:) service ko dikhta hi nahi, Dashboard usko accept kar leta hai | Bara | DONE | 96bdd78 |
-| 19 | Disable-RunExeAsAdmin.bat poori machine ka UAC prompt band karta hai | Darmiyana (deployment) | PENDING | |
+| 19 | Disable-RunExeAsAdmin.bat poori machine ka UAC prompt band karta hai | Darmiyana (deployment) | DONE | d58099c |
 
 ## Points tafseel se
 
@@ -326,6 +326,15 @@ Natija: keep-alive loop sach mein har minute chalega, outage mein bhi.
 
 **Behtar raaste (koi ek):** app ko ek scheduled task ke zariye "Run with highest privileges" se chalao (install .bat ek baar task banaye, shortcut usko trigger kare, prompt nahi aata, UAC poori machine pe on rehta hai). Ya app admin ke bagair chale aur service control ka kaam ek chhota elevated helper kare. Deployment policy ka faisla hai, Moiez ka call.
 
+**DONE (Moiez: "19 kar do, Update-Disable-RunExeAsAdmin.bat ke naam se", 2026-10-08, commit d58099c):**
+- Nayi `Update-Disable-RunExeAsAdmin.bat` Dropbox folder mein (purani `Disable-RunExeAsAdmin.Bat` ko haath nahi lagaya) aur repo ke `deploy\` mein (wahan purani wali hata di, git history mein hai). Teen kaam karti hai:
+  1. `schtasks /Create` se task `LotteryDisplayPOS\LdPosService`: app highest privileges pe, sirf jab user logged in ho (`/IT`), schedule pe kabhi nahi chalta (`/SC ONCE /ST 00:00`, waqt guzar chuka), sirf shortcut se trigger.
+  2. Public desktop pe shortcut "Lottery Display POS" jo `schtasks /Run /TN LotteryDisplayPOS\LdPosService` chalata hai, minimized, app ka icon. App bina UAC prompt ke elevated khulti hai.
+  3. `ConsentPromptBehaviorAdmin` wapas Windows default 5 pe, taake purani .bat ka asar un PCs se bhi hat jaye jahan woh chal chuki hai.
+- Shart: .bat usi Windows user se "Run as administrator" chale jo app use karega, aur woh user admin ho (task usi user ke naam banta hai). Guide mein likh diya.
+- Test: shortcut banane wala PowerShell snippet dev machine pe scratchpad mein test kiya (target, args, style sahi). Task aur registry wala hissa yahan nahi chalaya, dev machine ki security setting nahi chhedni thi. Client pe pehli baar chalte waqt dekhna: desktop pe shortcut aaye, double-click pe app bina prompt khule.
+- `Installation Guide.txt` bhi update: repo mein seedha, Dropbox mein `updated-Installation Guide.txt`. Steps ab: service install pehle, phir launcher setup, app shortcut se kholo, "Store Not Configured" ka matlab, Z: wali baat, log file ka raasta.
+
 ## Client logs analysis, 1-3 Oct 2026 (Wi-Fi wala store, purana March build)
 
 Moiez ne 2026-10-08 ko teen log files di: `service-20261001.log` (5855 lines), `service-20261002.log` (1315), `service-20261003.log` (98). Build purana hai (stack trace mein `FileMonitorService.cs:line 212`, path `C:\Users\Maxymus\...`), naye fixes isme nahi hain.
@@ -356,7 +365,7 @@ Moiez ne 2026-10-08 ko teen log files di: `service-20261001.log` (5855 lines), `
 - Publish: `FolderProfile.pubxml` → `C:\ProgramData\LotteryDisplayPOS\LdFileProcessor`, self-contained single-file win-x64. Yeh file gitignore mein hai (`*.pubxml`).
 - Runtime data: `C:\ProgramData\LdPosService\` mein `PosData.db`, `logs\service-YYYYMMDD.log`, `TempFiles\`.
 - Dev machine pe `C:\ProgramData\LdPosService\logs\` ke July 2026 logs ek doosri service ke hain (LdOposService: Verifone auth, CoreScanner barcode). Woh bhi same folder aur same `service-.log` naam use karti hai. Agar store machine pe dono services saath chalein to Serilog ka file sink ek waqt mein ek process ko hi file deta hai, doosri ke logs chup chaap gayab honge. Sawal: dono ek machine pe chalti hain? (Jawab: nahi, point 17.)
-- Deployment package: `E:\Dropbox\LD shared\Debug App\POS-Gilbarco-CSharp\LotteryDisplayPOS\` mein `Install-WindowService.bat`, `Unistall-WindowService.bat`, `Disable-RunExeAsAdmin.Bat`, `Installation Guide.txt`, aur `LdFileProcessor\`, `LdPosService\` ke exe (2026-03-09 ke builds, matlab client pe abhi March wala code hai). Client steps: folder `C:\ProgramData\LotteryDisplayPOS` mein copy, UAC .bat, install .bat (service NetworkService pe banti hai, start nahi hoti), `LdPosService.exe` admin se, barcode se login (format `LDSS.430.06107801`), Browse Folder se `\\10.5.48.2\XMLGateway\BOOutBox`, popup "service started". Server side pehle Store Settings mein Pos Lottery Dept ID aur Pos Payout Dept ID. 2026-10-06 se Dropbox mein `updated-Install-WindowService.bat` bhi hai (crash recovery ke saath), aur yahi scripts repo ke `deploy\` folder mein versioned hain; aage se deploy folder repo se Dropbox mein copy hona chahiye, ulta nahi.
+- Deployment package: `E:\Dropbox\LD shared\Debug App\POS-Gilbarco-CSharp\LotteryDisplayPOS\` mein `Install-WindowService.bat`, `Unistall-WindowService.bat`, `Disable-RunExeAsAdmin.Bat`, `Installation Guide.txt`, aur `LdFileProcessor\`, `LdPosService\` ke exe (2026-03-09 ke builds, matlab client pe abhi March wala code hai). Client steps: folder `C:\ProgramData\LotteryDisplayPOS` mein copy, UAC .bat, install .bat (service NetworkService pe banti hai, start nahi hoti), `LdPosService.exe` admin se, barcode se login (format `LDSS.430.06107801`), Browse Folder se `\\10.5.48.2\XMLGateway\BOOutBox`, popup "service started". Server side pehle Store Settings mein Pos Lottery Dept ID aur Pos Payout Dept ID. 2026-10-06 se Dropbox mein `updated-Install-WindowService.bat` bhi hai (crash recovery ke saath), aur yahi scripts repo ke `deploy\` folder mein versioned hain; aage se deploy folder repo se Dropbox mein copy hona chahiye, ulta nahi. 2026-10-08 se Dropbox mein `Update-Disable-RunExeAsAdmin.bat` aur `updated-Installation Guide.txt` bhi hain. Jab client sab update ho jayein, Dropbox se purani `Disable-RunExeAsAdmin.Bat`, `Install-WindowService.bat` aur `Installation Guide.txt` hata do aur nayi files ke naam se "updated-"/"Update-" prefix nikaal do; repo ka `deploy\` folder wahi final naam rakhta hai (sirf `Update-Disable-RunExeAsAdmin.bat` ka naam Moiez ki marzi se aisa hi hai).
 
 ## Commits (sirf code; notes ke commits yahan nahi)
 
@@ -373,3 +382,4 @@ Moiez ne 2026-10-08 ko teen log files di: `service-20261001.log` (5855 lines), `
 | 082929d | 2026-10-07 | Point 9 (+10): ILogger in ApiLibrary, HTTP status/body logged on failures, inner exceptions kept, login JSON serialized |
 | 7190a87 | 2026-10-08 | Point 14: path check / watcher create / scan listing / copy with timeouts, single in-flight Exists, lock wait by wall clock |
 | 66192af | 2026-10-08 | Point 6: login refused when pos_dept_id is 0 (token released), saved DeptId-0 user removed on start, Dashboard shows store/dept, service logs ERROR |
+| d58099c | 2026-10-08 | Point 19: Update-Disable-RunExeAsAdmin.bat (elevated scheduled task + desktop shortcut, UAC default restored), Installation Guide rewritten |
