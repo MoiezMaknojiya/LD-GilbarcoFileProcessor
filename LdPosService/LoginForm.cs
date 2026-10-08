@@ -33,6 +33,20 @@ namespace LdPosService
 
                 if (loginResponse.success == 1 && loginResponse.user != null)
                 {
+                    // The service filters every transaction by this department. Without it every sale would be
+                    // ignored silently, so the login is refused and the token just issued is released again.
+                    if (loginResponse.pos_dept_id <= 0)
+                    {
+                        MessageBox.Show(StoreNotConfiguredMessage("Login succeeded, but"), "Store Not Configured",
+                            MessageBoxButtons.OK, MessageBoxIcon.Error);
+                        if (!string.IsNullOrEmpty(loginResponse.accessToken))
+                        {
+                            await _apiService.LogoutAsync(loginResponse.accessToken);   // do not leave an unused token on the server
+                        }
+                        btnLogin.Enabled = true;
+                        return;
+                    }
+
                     var user = new User
                     {
                         UUID = loginResponse.user.id,
@@ -45,7 +59,7 @@ namespace LdPosService
                     };
 
                     _dbHelper.AddUser(user);
-                    DashboardForm dashboard = new DashboardForm(loginResponse.user.id, loginResponse.user.username ?? "", loginResponse.accessToken ?? "");
+                    DashboardForm dashboard = new DashboardForm(loginResponse.user.id, loginResponse.user.username ?? "", loginResponse.accessToken ?? "", loginResponse.store_id, loginResponse.pos_dept_id);
 
                     this.Hide();
                     dashboard.ShowDialog();
@@ -64,7 +78,7 @@ namespace LdPosService
             }
         }
 
-        private void LoginForm_Load(object sender, EventArgs e)
+        private async void LoginForm_Load(object sender, EventArgs e)
         {
             // Initialize database
             DatabaseServices.InitializeDatabase();
@@ -73,13 +87,29 @@ namespace LdPosService
             {
                 var hasUser = _dbHelper.GetLastLoggedInUser();
 
+                if (hasUser != null && hasUser.DeptId <= 0)
+                {
+                    // Saved by an older build, before the login check existed: drop it and ask for a fresh login
+                    MessageBox.Show(StoreNotConfiguredMessage("The saved login for this store has been removed because"), "Store Not Configured",
+                        MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    if (!string.IsNullOrEmpty(hasUser.AccessToken))
+                    {
+                        await _apiService.LogoutAsync(hasUser.AccessToken);   // release the token on the server
+                    }
+                    _dbHelper.DeleteUserByUUID(hasUser.UUID);
+                    _dbHelper.DeleteAllTransactions();
+                    hasUser = null;
+                }
+
                 if (hasUser != null)
                 {
                     // Auto-login and open dashboard
                     DashboardForm dashboard = new DashboardForm(
                         hasUser.UUID,
                         hasUser.Username ?? "",
-                        hasUser.AccessToken ?? ""
+                        hasUser.AccessToken ?? "",
+                        hasUser.StoreId,
+                        hasUser.DeptId
                     );
 
                     this.Hide();
@@ -92,6 +122,14 @@ namespace LdPosService
                 MessageBox.Show($"Error checking saved user: {ex.Message}",
                                 "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
+        }
+
+        private static string StoreNotConfiguredMessage(string lead)
+        {
+            return lead + " this store has no \"Pos Lottery Dept ID\" on lotteryscreen.app.\n\n" +
+                   "The background service filters every transaction by that department, so it would ignore all sales.\n\n" +
+                   "Open lotteryscreen.app > Store Settings, set \"Pos Lottery Dept ID\" (and \"Pos Payout Dept ID\"), " +
+                   "then log in again and select the BOOutBox folder.";
         }
 
         

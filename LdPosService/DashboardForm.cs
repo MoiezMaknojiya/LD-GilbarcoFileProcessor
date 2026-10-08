@@ -10,17 +10,21 @@ namespace LdPosService
         private readonly int _uuid;
         private readonly string _userName;
         private readonly string _accessToken;
+        private readonly int _storeId;
+        private readonly int _deptId;
         private readonly DatabaseServices _dbHelper;
         private readonly ApiServices _apiService;
         private const string ServiceName = "LdFileProcessor";
 
-        public DashboardForm(int uuid, string userName, string accessToken)
+        public DashboardForm(int uuid, string userName, string accessToken, int storeId, int deptId)
         {
             InitializeComponent();
             Icon = System.Drawing.Icon.ExtractAssociatedIcon(Application.ExecutablePath);  // app icon comes from the exe, nothing embedded in the .resx
             _uuid = uuid;
             _userName = userName;
             _accessToken = accessToken;
+            _storeId = storeId;
+            _deptId = deptId;
             _dbHelper = new DatabaseServices();
             _apiService = new ApiServices();
         }
@@ -54,7 +58,7 @@ namespace LdPosService
         // onFormLoad Function
         private void DashboardForm_Load(object sender, EventArgs e)
         {
-            lblWelcome.Text = $"Welcome, {_userName}!";
+            lblWelcome.Text = $"Welcome, {_userName}!   Store {_storeId}, Lottery Dept {_deptId}";
         }
 
         // onClick Browse Folder

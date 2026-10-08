@@ -219,6 +219,12 @@ namespace LdFileProcessor
                     {
                         _logger.LogInformation("Local folder path retrieved from database: {path}.\n", _folderPath);
                     }
+
+                    if (lastUser.DeptId <= 0)
+                    {
+                        _logger.LogError("The saved login has no POS lottery department (DeptId {deptId}). Every transaction will be ignored " +
+                            "until \"Pos Lottery Dept ID\" is set in Store Settings on lotteryscreen.app and the user logs in again.\n", lastUser.DeptId);
+                    }
                 }
                 else
                 {
@@ -674,6 +680,15 @@ namespace LdFileProcessor
                 // Get user's department ID (used to filter transactions)
                 int userDeptId = _currentUser.DeptId;
                 string fileName = Path.GetFileName(filePath);
+
+                if (userDeptId <= 0)
+                {
+                    // Misconfigured store (see GetFolderPathFromDatabaseAsync): nothing can match, so say so loudly
+                    _logger.LogError("Ignoring {fileName}: the saved login has no POS lottery department (DeptId {deptId}). Set \"Pos Lottery Dept ID\" in Store Settings and log in again.\n", fileName, userDeptId);
+                    _fileUtilities.DeleteFile(filePath, msg => _logger.LogError(msg), msg => _logger.LogInformation(msg));
+                    _logger.LogInformation("======================================== FILE PROCESS END ========================================\n");
+                    return;
+                }
 
                 // Step 5: Parse XML (validate it's proper XML format)
                 XDocument xDoc;
