@@ -27,7 +27,7 @@ Yeh file har review point ka masla, discussion, faisla aur status rakhti hai. Ha
 | 11 | Retry comment aur code alag | Darmiyana | DONE | 629989f |
 | 12 | Nested form chain | Chhota | PENDING | |
 | 13 | UI freeze, WaitForStatus UI thread pe | Chhota | PENDING | |
-| 14 | UNC path pe sync Directory.Exists | **Bara** (client logs: 12-16 minute block) | PENDING, deploy se pehle | |
+| 14 | UNC path pe sync Directory.Exists | **Bara** (client logs: 12-16 minute block) | DONE | 7190a87 |
 | 15 | Dead code aur faltu saaman | Chhota | DONE | 6e49536 |
 | 16 | Server ka reject (4xx) aur network fail ek jaise treat; point 1 ke baad rejected row queue block kar sakti hai | Bara | CHOR DO (server 200 deta hai) | - |
 | 17 | LdOposService aur LdFileProcessor same log folder aur same file naam | Chhota | CHOR DO | - |
@@ -202,6 +202,8 @@ Pehli line: process crash ho to Windows 5s, 10s, 30s baad wapas chalaye, 24 ghan
 
 **Faisla (Moiez, 2026-10-07): 30 second.** DONE, commit 629989f. `FileMonitorService.cs` line 63: `LockRetryCount = 60`, `LockRetryDelay = 500ms`, 60 x 500ms = 30 second. Loop (line 343) aur dono log messages ab inhi constants se number lete hain, "retrying in 500ms (7/60)" aur "still locked after 60 retries (30s). Skipping for now; the periodic folder scan will pick it up". Number badalna ho to sirf constants.
 
+**Update (2026-10-08, point 14 ke saath, 7190a87):** 60 attempts ki jagah ab `LockWaitBudget = 30 second` ghadi se. Wajah client log: ek "30 second" wait 3.5 minute chala kyunke har `IsFileLocked` call network pe latki. Log ab "retrying in 500ms (12s of 30s)" aur "still locked after 30s" likhta hai.
+
 ### 12. Nested form chain — PENDING
 
 **Masla:** `LoginForm.cs:50` aur `DashboardForm.cs:43` dono `ShowDialog` nested chalate hain. Login, Dashboard, phir naya Login, naya Dashboard. Har logout/login pe ek hidden form stack pe baitha rehta hai jab tak app band na ho.
@@ -226,6 +228,27 @@ Pehli line: process crash ho to Windows 5s, 10s, 30s baad wapas chalaye, 24 ghan
 3. Folder scan mein `Directory.GetFiles` aur har `File.Copy` bhi timeout ke saath (20s aur 30s), taake scan loop ko na latkaye.
 4. File-lock wait 30 second wall-clock budget pe, iteration count pe nahi: 1 Oct ko ek file ka lock-wait 3.5 minute chala kyunke har `IsFileLocked` call khud network pe latki.
 Natija: keep-alive loop sach mein har minute chalega, outage mein bhi.
+
+**DONE (2026-10-08, commit 7190a87), sab `LdFileProcessor/FileMonitorService.cs` mein:**
+- `IsPathAccessibleAsync` (line 978): `Directory.Exists` thread pool pe, 10 second (`PathCheckTimeout`) mein jawab na aaye to "abhi accessible nahi". Ek waqt mein ek hi check in-flight (`_pathCheck`), latka hua ho to agla caller usi ka 10 second intezaar karta hai, naya thread nahi banata. Latki call khud khatam ho jaati hai.
+- `TrySetupFileWatcherAsync` (line 249) + `CreateWatcher` (line 315): watcher ka constructor (uska Path setter bhi `Directory.Exists` karta hai) aur `EnableRaisingEvents` thread pool pe, 30 second (`WatcherCreateTimeout`). Timeout pe fail, agle minute phir; der se bana hua watcher dispose. Chhota race bhi band: watcher publish hone se pehle Error de de to `_deadWatchers` mein note, publish nahi hota.
+- `ScanFolderAsync`: folder listing + filter ek task mein 20 second (`FolderListTimeout`), har `File.Copy` 30 second (`FileCopyTimeout`). Copy timeout pe file handled mark nahi hoti, agla scan dobara try karta hai.
+- Lock wait: `LockRetryCount` gaya, ab `LockWaitBudget` 30 second ghadi se (Stopwatch), 500ms ke farq se check. Ek check khud latak jaye to bhi budget ke baad loop khatam.
+- Helper `RunWithTimeoutAsync<T>` (line 1032): koi bhi blocking call thread pe + timeout, exception caller tak waise hi pohnchti hai.
+
+**Retry timings ab (naya code):**
+
+| Kya | Kitni der mein |
+|---|---|
+| Path check ka jawab | max 10 second, warna "not accessible" |
+| Start pe path na mile ya accessible na ho | har 30 second dobara DB se path aur check |
+| Start pe watcher na bane | 30 second ruk ke dobara |
+| Keep-alive loop (watcher check + scan + uploads) | har 1 minute, ab sach mein 1 minute |
+| Watcher gira (Error event) aur share wapas | agle minute tick pe dobara, max ~1 minute + 30 second create |
+| Watcher chup chaap mara | max 5 minute (periodic scan files uthata hai aur watcher dobara banata hai) |
+| Pending uploads | har 1 minute, pehli fail pe pass band, agle minute phir |
+| Locked file | 30 second wait, phir skip, 5 minute ke andar scan dobara |
+| Process crash | Windows 5s, 10s, 30s baad wapas (install .bat) |
 
 ### 15. Dead code aur faltu saaman — DONE (6e49536)
 
@@ -340,3 +363,4 @@ Moiez ne 2026-10-08 ko teen log files di: `service-20261001.log` (5855 lines), `
 | 96bdd78 | 2026-10-07 | Point 18: Dashboard converts mapped drive letter to UNC before saving (WNetGetConnection) |
 | 629989f | 2026-10-07 | Point 11: lock wait 60 x 500ms = 30s via constants, log text derived from them |
 | 082929d | 2026-10-07 | Point 9 (+10): ILogger in ApiLibrary, HTTP status/body logged on failures, inner exceptions kept, login JSON serialized |
+| 7190a87 | 2026-10-08 | Point 14: path check / watcher create / scan listing / copy with timeouts, single in-flight Exists, lock wait by wall clock |
