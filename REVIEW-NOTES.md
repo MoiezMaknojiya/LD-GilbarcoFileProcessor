@@ -27,7 +27,7 @@ Yeh file har review point ka masla, discussion, faisla aur status rakhti hai. Ha
 | 11 | Retry comment aur code alag | Darmiyana | DONE | 629989f |
 | 12 | Nested form chain | Chhota | PENDING | |
 | 13 | UI freeze, WaitForStatus UI thread pe | Chhota | PENDING | |
-| 14 | UNC path pe sync Directory.Exists | Chhota | PENDING | |
+| 14 | UNC path pe sync Directory.Exists | **Bara** (client logs: 12-16 minute block) | PENDING, deploy se pehle | |
 | 15 | Dead code aur faltu saaman | Chhota | DONE | 6e49536 |
 | 16 | Server ka reject (4xx) aur network fail ek jaise treat; point 1 ke baad rejected row queue block kar sakti hai | Bara | CHOR DO (server 200 deta hai) | - |
 | 17 | LdOposService aur LdFileProcessor same log folder aur same file naam | Chhota | CHOR DO | - |
@@ -54,6 +54,8 @@ Yeh file har review point ka masla, discussion, faisla aur status rakhti hai. Ha
 **Ab behaviour:** B wali stranded transaction max 1 minute late. Net wapas aaye to 1 minute ke andar sab pending nikal jaati hain. Net down aur 20 pending hon to pehli fail pe pass band, agle minute dobara.
 
 **Caveat:** "pehli fail pe break" tab galat hota jab server kisi row ko hamesha error status se reject karta. Point 16 mein confirm hua ke server duplicate pe 200 deta hai, to yeh caveat lagu nahi hoti.
+
+**Client logs ne confirm kiya (1-3 Oct):** 1 Oct 21:27 transaction 4731 ki upload fail (14ms mein, matlab network nahi tha, Wi-Fi gir raha tha), 23:36 ko 4731, 4742, 4752, 4760 phir fail. Chaaron 2 Oct 17:31 pe upload huin, jab service manually restart hui. **20 ghante ki delay.** 2 Oct 22:40 ko 5121 aur 5130 fail, 3-3 baar, 3 Oct ke log mein kabhi upload nahi huin (service deaf thi). Naye code mein yeh har minute retry hoti, net wapas aate hi chali jaati.
 
 **Deploy:** Sirf code mein hai. Store machine pe service dobara publish aur restart zaroori.
 
@@ -92,6 +94,11 @@ Yeh file har review point ka masla, discussion, faisla aur status rakhti hai. Ha
 **Deploy:** service dobara publish aur restart zaroori. Crash recovery Install .bat mein hai (neeche "Deployment" dekho), manual command nahi.
 
 **Refinement DONE (e6e2af5):** watcher bina Error event ke chup chaap mar jaye to pehle service 5-minute polling mode mein chalti rehti thi, watcher restart tak wapas nahi aata tha. Ab `ScanFolderAsync` (line 491) mein: periodic scan ko aisi files milein jo is run mein handle nahi hui, to watcher ne unko report nahi kiya, matlab mara hua hai, wahin `TrySetupFileWatcher()` se dobara banao. Sehatmand watcher galti se dobara ban jaye to koi nuqsan nahi. Ab teeno case (start pe fail, Error event, chup chaap maut) max 5 minute mein poori tarah recover.
+
+**Client logs ne confirm kiya (2026-10-08, logs 1-3 Oct):** purane build pe yeh 3 din mein 2 baar hua, dono baar poora din deaf:
+- 2 Oct 06:03:14 "Network path is accessible again (attempt 7). Restarting file watcher." → 06:05:44 `Error setting up file watcher. System.IO.FileNotFoundException: Error reading the \\10.5.48.2\XMLGateway\BOOutBox directory. at FileSystemWatcher.StartRaisingEvents()` → "Folder not found" → recovery loop khatam. Uske baad 17:30 tak log mein ek line nahi, ek file nahi. 17:30 pe kisi ne service manually restart ki, startup scan ko "Found 0 existing XML files" mila (Modisoft din ki files delete kar chuka tha), phir 30 minute mein 20 nayi files. Matlab 2 Oct ka poora din (06:05 se 17:30) hamari service behri thi aur us din ki lottery sales lotteryscreen.app tak kabhi nahi pohnchi.
+- 3 Oct 04:42:41 "accessible again (attempt 1)" → 04:45:23 "Folder path is not accessible" (SetupFileWatcher ka andar wala check 2m42s latka, point 14) → "Folder not found" → recovery loop khatam. Log wahin khatam, poore din ek line nahi. 3 Oct bhi deaf.
+Exception ka text wahi hai jo analysis mein likha tha: `EnableRaisingEvents = true` (purane code ki line 212) share reconnect ke beech throw karta hai.
 
 **Pehle ka analysis aur plan, reference ke liye:**
 
@@ -211,6 +218,15 @@ Pehli line: process crash ho to Windows 5s, 10s, 30s baad wapas chalaye, 24 ghan
 
 **Masla:** `FileMonitorService.cs:772` `Directory.Exists` network path pe sync hai. Network down ho to yeh call kaafi der latak sakti hai. Chhota masla.
 
+**Client logs (1-3 Oct 2026) ne dikhaya ke yeh chhota nahi hai.** Purane code ka recovery loop "Retrying in 30 seconds" likhta hai, lekin attempt lines ke beech 12 se 16 minute ka farq hai (neeche "Client logs analysis" section). Matlab `Directory.Exists` share down hone pe har baar 12-16 minute block karta hai. Isi wajah se 3 Oct ko "accessible again" ke 2 minute 42 second baad "Folder path is not accessible" aaya: pehla check turant true, doosra check (SetupFileWatcher ke andar) 2m42s latka aur false. Naye code mein yeh aur zaroori hai: keep-alive loop har minute `IsPathAccessible` call karta hai, share down ho to har iteration 14 minute lat-kegi, aur usi loop mein pending uploads ka retry bhi hai, woh bhi 14 minute late ho jayega.
+
+**Fix plan (2026-10-08):**
+1. `IsPathAccessibleAsync`: `Directory.Exists` thread pool pe chalao, 10 second se zyada jawab na aaye to "abhi accessible nahi" maano. Ek waqt mein ek hi check in-flight rahe, pehla abhi latka ho to naya thread na banao, usi ka intezaar karo. Latki hui call apne aap khatam ho jaati hai.
+2. Watcher banana (`new FileSystemWatcher` ka Path setter bhi `Directory.Exists` karta hai, aur `EnableRaisingEvents` directory handle kholta hai) bhi thread pool pe timeout ke saath, 30 second. Timeout pe fail maano, agle minute phir.
+3. Folder scan mein `Directory.GetFiles` aur har `File.Copy` bhi timeout ke saath (20s aur 30s), taake scan loop ko na latkaye.
+4. File-lock wait 30 second wall-clock budget pe, iteration count pe nahi: 1 Oct ko ek file ka lock-wait 3.5 minute chala kyunke har `IsFileLocked` call khud network pe latki.
+Natija: keep-alive loop sach mein har minute chalega, outage mein bhi.
+
 ### 15. Dead code aur faltu saaman — DONE (6e49536)
 
 **Kya badla (2026-10-07):**
@@ -278,6 +294,28 @@ Pehli line: process crash ho to Windows 5s, 10s, 30s baad wapas chalaye, 24 ghan
 **Masla:** Installation Guide ka step 3 `Disable-RunExeAsAdmin.Bat` chalata hai, jo registry mein `ConsentPromptBehaviorAdmin = 0` set karta hai. Matlab us store PC pe har admin action bina UAC prompt ke chalega, sirf hamari app nahi, har program. Wajah samajh aati hai: `LdPosService.exe` ka manifest `requireAdministrator` hai (service start/stop aur ACL ke liye) aur client ko har baar prompt na dikhe.
 
 **Behtar raaste (koi ek):** app ko ek scheduled task ke zariye "Run with highest privileges" se chalao (install .bat ek baar task banaye, shortcut usko trigger kare, prompt nahi aata, UAC poori machine pe on rehta hai). Ya app admin ke bagair chale aur service control ka kaam ek chhota elevated helper kare. Deployment policy ka faisla hai, Moiez ka call.
+
+## Client logs analysis, 1-3 Oct 2026 (Wi-Fi wala store, purana March build)
+
+Moiez ne 2026-10-08 ko teen log files di: `service-20261001.log` (5855 lines), `service-20261002.log` (1315), `service-20261003.log` (98). Build purana hai (stack trace mein `FileMonitorService.cs:line 212`, path `C:\Users\Maxymus\...`), naye fixes isme nahi hain.
+
+**Din ka pattern:**
+- 1 Oct (Wed): 09:56 start, subah do manual restart (09:57, 10:41). Din bhar 10:00-18:00 network stable, 280 files, 23 lottery, 19 upload sab OK. 17:11 se Wi-Fi girna shuru, raat bhar 6 outages.
+- 2 Oct (Thu): raat 00:00-06:03 outages. 06:05 watcher fail, **deaf 06:05-17:30**. 17:30 manual restart, 20 files 30 minute mein. Raat 18:00 se phir outages, 12 total.
+- 3 Oct (Fri): raat outages, 04:45 watcher fail, **deaf poora din**, log 04:45 pe khatam.
+
+**Network ka pattern:** raat ko (roughly 17:00 se 06:00) share baar baar girta hai: up 1-3 minute, down 10-15 minute. Din mein stable. Lagta hai Wi-Fi AP ya Passport raat ko kuch karta hai (power save, reboot, backup). Yeh hamara masla nahi, lekin service ko isi mein zinda rehna hai.
+
+**Jo confirm hua:**
+| Point | Evidence |
+|---|---|
+| 4 (watcher fail → deaf) | 2 Oct 06:05 FileNotFoundException at StartRaisingEvents; 3 Oct 04:45 "Folder path is not accessible". Dono baar poora din deaf, sirf manual restart se theek. |
+| 14 (Directory.Exists latakta hai) | Retry attempts ke beech 12-16 minute, code 30 second sota hai. 3 Oct: do checks ke beech 2m42s. |
+| 1 (upload retry nahi) | 4 transactions 20 ghante late (21:27 fail, agle din 17:31 OK). 2 transactions 3 Oct tak pending. |
+| 11 (lock wait) | 1 Oct 19:12:48 file detect, 19:16:16 "still locked after 10 retries" (3.5 minute, 35 second nahi, kyunke har check network pe latki). Turant baad "Win32Exception (53): The network path was not found", matlab file locked nahi thi, network gaya tha. File `PJR3402610011912022648.xml` dobara kabhi process nahi hui, gayi. |
+| 3 (restart pe sab dobara) | 2 Oct 22:22 scan "Found 19", 22:39 "Found 24", 22:55 "Found 27": har recovery pe folder ki saari files dobara process aur upload. Naye code mein handled list se sirf nayi. |
+
+**Naye code (GitHub, abhi deploy nahi) se kya badalta:** 2 Oct aur 3 Oct wale case mein watcher 1 minute baad dobara banta, deaf nahi hota. Uploads minutes mein. Locked/gayi file 5 minute baad scan uthata. Lekin point 14 ke bagair keep-alive loop outage mein har 14 minute chalega, 1 minute nahi, isliye 14 deploy se pehle zaroori.
 
 ## Background facts
 
