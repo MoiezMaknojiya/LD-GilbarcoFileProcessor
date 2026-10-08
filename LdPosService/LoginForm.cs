@@ -61,9 +61,7 @@ namespace LdPosService
                     _dbHelper.AddUser(user);
                     DashboardForm dashboard = new DashboardForm(loginResponse.user.id, loginResponse.user.username ?? "", loginResponse.accessToken ?? "", loginResponse.store_id, loginResponse.pos_dept_id);
 
-                    this.Hide();
-                    dashboard.ShowDialog();
-                    this.Close();
+                    ShowDashboard(dashboard);
                 }
                 else
                 {
@@ -112,15 +110,41 @@ namespace LdPosService
                         hasUser.DeptId
                     );
 
-                    this.Hide();
-                    dashboard.ShowDialog();
-                    this.Close();
+                    ShowDashboard(dashboard);
                 }
             }
             catch (Exception ex)
             {
                 MessageBox.Show($"Error checking saved user: {ex.Message}",
                                 "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
+        /// <summary>
+        /// Shows the dashboard as a modal dialog over this (hidden) login form. When the user logs out, the
+        /// dashboard closes with DialogResult.Retry and this form simply shows itself again, so the app never
+        /// nests one dialog inside another. Closing the dashboard any other way exits the app.
+        /// </summary>
+        private void ShowDashboard(DashboardForm dashboard)
+        {
+            this.Hide();
+            DialogResult result;
+            using (dashboard)
+            {
+                result = dashboard.ShowDialog();
+            }
+
+            if (result == DialogResult.Retry)
+            {
+                // Logged out: back to a clean login screen
+                txtUUID.Clear();
+                btnLogin.Enabled = true;
+                this.Show();
+                txtUUID.Focus();
+            }
+            else
+            {
+                this.Close();
             }
         }
 

@@ -16,6 +16,15 @@ namespace LdPosService
         private readonly ApiServices _apiService;
         private const string ServiceName = "LdFileProcessor";
 
+        // Result of a service control action. The action runs on a worker thread; the UI thread shows this afterwards.
+        private readonly record struct ServiceActionResult(string Title, string Message, MessageBoxIcon Icon);
+
+        // Stopping can take up to 30 s: the service host waits for an upload in flight before it shuts down.
+        private static readonly TimeSpan StopTimeout = TimeSpan.FromSeconds(30);
+        private static readonly TimeSpan StartTimeout = TimeSpan.FromSeconds(15);
+
+        private string _welcomeText = "";
+
         public DashboardForm(int uuid, string userName, string accessToken, int storeId, int deptId)
         {
             InitializeComponent();
@@ -34,35 +43,35 @@ namespace LdPosService
         {
             try
             {
-                btnLogout.Enabled = false;
+                // Stop the Windows Service on a worker thread; the window keeps responding meanwhile
+                await RunServiceActionAsync("Stopping the service, please wait...", StopWindowsService);
 
-                // Stop the Windows Service
-                StopWindowsService();
-
-                bool apiLogoutSuccess = await _apiService.LogoutAsync(_accessToken);
+                SetBusy(true, "Logging out...");
+                await _apiService.LogoutAsync(_accessToken);
                 _dbHelper.DeleteUserByUUID(_uuid);
                 _dbHelper.DeleteAllTransactions();
 
-                LoginForm loginForm = new LoginForm();
-                this.Hide();
-                loginForm.ShowDialog();
-                this.Close();
+                // Hand control back to the login form that opened this dialog (LoginForm.ShowDashboard): it shows
+                // itself again. No new LoginForm here, so dialogs no longer nest on every logout/login cycle.
+                DialogResult = DialogResult.Retry;
+                Close();
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Error during logout: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                btnLogout.Enabled = true;
+                MessageBox.Show(this, $"Error during logout: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                SetBusy(false, "");
             }
         }
 
         // onFormLoad Function
         private void DashboardForm_Load(object sender, EventArgs e)
         {
-            lblWelcome.Text = $"Welcome, {_userName}!   Store {_storeId}, Lottery Dept {_deptId}";
+            _welcomeText = $"Welcome, {_userName}!   Store {_storeId}, Lottery Dept {_deptId}";
+            lblWelcome.Text = _welcomeText;
         }
 
         // onClick Browse Folder
-        private void btnBrowseFolder_Click(object sender, EventArgs e)
+        private async void btnBrowseFolder_Click(object sender, EventArgs e)
         {
             using (FolderBrowserDialog folderDialog = new FolderBrowserDialog())
             {
@@ -95,8 +104,8 @@ namespace LdPosService
                             MessageBox.Show($"Folder saved successfully:\n\n{servicePath}{note}",
                                 "Success", MessageBoxButtons.OK, MessageBoxIcon.Information);
 
-                            // Start or Restart service based on current state
-                            StartOrRestartWindowsService();
+                            // Start or restart the service on a worker thread so the window stays responsive
+                            await RunServiceActionAsync("Restarting the service, please wait...", StartOrRestartWindowsService);
                         }
                         catch (Exception ex)
                         {
@@ -178,7 +187,36 @@ namespace LdPosService
             return true;
         }
 
-        private void StartOrRestartWindowsService()
+        private void SetBusy(bool busy, string status)
+        {
+            btnBrowseFolder.Enabled = !busy;
+            btnLogout.Enabled = !busy;
+            UseWaitCursor = busy;
+            lblWelcome.Text = busy ? status : _welcomeText;
+        }
+
+        /// <summary>
+        /// Runs a service control action on a worker thread, so the window keeps repainting and responding,
+        /// then shows its result. ServiceController.Stop/Start/WaitForStatus block for seconds; on the UI
+        /// thread that showed up as "(Not Responding)" and tempted people to kill the app mid-restart, which
+        /// left the service stopped.
+        /// </summary>
+        private async Task RunServiceActionAsync(string status, Func<ServiceActionResult> action)
+        {
+            SetBusy(true, status);
+            try
+            {
+                ServiceActionResult result = await Task.Run(action);
+                MessageBox.Show(this, result.Message, result.Title, MessageBoxButtons.OK, result.Icon);
+            }
+            finally
+            {
+                SetBusy(false, "");
+            }
+        }
+
+        // Runs on a worker thread: no UI access in here, the result is shown by RunServiceActionAsync
+        private ServiceActionResult StartOrRestartWindowsService()
         {
             try
             {
@@ -191,65 +229,71 @@ namespace LdPosService
                     {
                         // Service is running - RESTART it to pick up new folder path
                         sc.Stop();
-                        sc.WaitForStatus(ServiceControllerStatus.Stopped, TimeSpan.FromSeconds(10));
+                        sc.WaitForStatus(ServiceControllerStatus.Stopped, StopTimeout);
                         sc.Start();
-                        sc.WaitForStatus(ServiceControllerStatus.Running, TimeSpan.FromSeconds(10));
-                        MessageBox.Show("Service was running - restarted to apply new folder path.",
-                            "Service Restarted", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                        sc.WaitForStatus(ServiceControllerStatus.Running, StartTimeout);
+                        return new ServiceActionResult("Service Restarted",
+                            "Service was running - restarted to apply new folder path.", MessageBoxIcon.Information);
                     }
-                    else if (currentStatus == ServiceControllerStatus.Stopped)
+
+                    if (currentStatus == ServiceControllerStatus.Stopped)
                     {
                         // Service is stopped - just START it
                         sc.Start();
-                        sc.WaitForStatus(ServiceControllerStatus.Running, TimeSpan.FromSeconds(10));
-                        MessageBox.Show("Service started successfully.",
-                            "Service Started", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                        sc.WaitForStatus(ServiceControllerStatus.Running, StartTimeout);
+                        return new ServiceActionResult("Service Started",
+                            "Service started successfully.", MessageBoxIcon.Information);
                     }
-                    else if (currentStatus == ServiceControllerStatus.StartPending)
+
+                    if (currentStatus == ServiceControllerStatus.StartPending)
                     {
                         // Wait for it to start, then restart
-                        sc.WaitForStatus(ServiceControllerStatus.Running, TimeSpan.FromSeconds(10));
+                        sc.WaitForStatus(ServiceControllerStatus.Running, StartTimeout);
                         sc.Stop();
-                        sc.WaitForStatus(ServiceControllerStatus.Stopped, TimeSpan.FromSeconds(10));
+                        sc.WaitForStatus(ServiceControllerStatus.Stopped, StopTimeout);
                         sc.Start();
-                        sc.WaitForStatus(ServiceControllerStatus.Running, TimeSpan.FromSeconds(10));
-                        MessageBox.Show("Service was starting - restarted to apply new folder path.",
-                            "Service Restarted", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                        sc.WaitForStatus(ServiceControllerStatus.Running, StartTimeout);
+                        return new ServiceActionResult("Service Restarted",
+                            "Service was starting - restarted to apply new folder path.", MessageBoxIcon.Information);
                     }
-                    else if (currentStatus == ServiceControllerStatus.StopPending)
+
+                    if (currentStatus == ServiceControllerStatus.StopPending)
                     {
                         // Wait for it to stop, then start
-                        sc.WaitForStatus(ServiceControllerStatus.Stopped, TimeSpan.FromSeconds(10));
+                        sc.WaitForStatus(ServiceControllerStatus.Stopped, StopTimeout);
                         sc.Start();
-                        sc.WaitForStatus(ServiceControllerStatus.Running, TimeSpan.FromSeconds(10));
-                        MessageBox.Show("Service was stopping - started successfully.",
-                            "Service Started", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                        sc.WaitForStatus(ServiceControllerStatus.Running, StartTimeout);
+                        return new ServiceActionResult("Service Started",
+                            "Service was stopping - started successfully.", MessageBoxIcon.Information);
                     }
+
+                    return new ServiceActionResult("Service",
+                        $"Service is in state '{currentStatus}'. Nothing was changed; please check it manually.", MessageBoxIcon.Warning);
                 }
             }
             catch (InvalidOperationException)
             {
-                MessageBox.Show($"Service '{ServiceName}' not found. Please ensure the service is installed.",
-                    "Service Not Found", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return new ServiceActionResult("Service Not Found",
+                    $"Service '{ServiceName}' not found. Please ensure the service is installed.", MessageBoxIcon.Error);
             }
             catch (System.ComponentModel.Win32Exception)
             {
-                MessageBox.Show("Access denied. Please run this application as Administrator to control the service.",
-                    "Permission Denied", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return new ServiceActionResult("Permission Denied",
+                    "Access denied. Please run this application as Administrator to control the service.", MessageBoxIcon.Error);
             }
             catch (System.TimeoutException)
             {
-                MessageBox.Show("Service operation timed out. Please check the service manually.",
-                    "Timeout", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return new ServiceActionResult("Timeout",
+                    "Service operation timed out. Please check the service manually.", MessageBoxIcon.Warning);
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Error controlling service: {ex.Message}",
-                    "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return new ServiceActionResult("Error", $"Error controlling service: {ex.Message}", MessageBoxIcon.Error);
             }
         }
 
-        private void StopWindowsService()
+        // Runs on a worker thread: no UI access in here, the result is shown by RunServiceActionAsync
+        private ServiceActionResult StopWindowsService()
         {
             try
             {
@@ -260,38 +304,41 @@ namespace LdPosService
                         // Wait for start to complete if starting
                         if (sc.Status == ServiceControllerStatus.StartPending)
                         {
-                            sc.WaitForStatus(ServiceControllerStatus.Running, TimeSpan.FromSeconds(10));
+                            sc.WaitForStatus(ServiceControllerStatus.Running, StartTimeout);
                         }
 
                         sc.Stop();
-                        sc.WaitForStatus(ServiceControllerStatus.Stopped, TimeSpan.FromSeconds(10));
-                        MessageBox.Show("Windows Service stopped successfully.", "Service Stopped", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                        sc.WaitForStatus(ServiceControllerStatus.Stopped, StopTimeout);
+                        return new ServiceActionResult("Service Stopped", "Windows Service stopped successfully.", MessageBoxIcon.Information);
                     }
-                    else if (sc.Status == ServiceControllerStatus.Stopped)
+
+                    if (sc.Status == ServiceControllerStatus.StopPending)
                     {
-                        MessageBox.Show("Windows Service is already stopped.", "Service Stopped", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                        sc.WaitForStatus(ServiceControllerStatus.Stopped, StopTimeout);
+                        return new ServiceActionResult("Service Stopped", "Windows Service stopped successfully.", MessageBoxIcon.Information);
                     }
+
+                    return new ServiceActionResult("Service Stopped", "Windows Service is already stopped.", MessageBoxIcon.Information);
                 }
             }
             catch (InvalidOperationException)
             {
-                MessageBox.Show($"Service '{ServiceName}' not found. Please ensure the service is installed.",
-                    "Service Not Found", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return new ServiceActionResult("Service Not Found",
+                    $"Service '{ServiceName}' not found. Please ensure the service is installed.", MessageBoxIcon.Error);
             }
             catch (System.ComponentModel.Win32Exception)
             {
-                MessageBox.Show("Access denied. Please run this application as Administrator to control the service.",
-                    "Permission Denied", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return new ServiceActionResult("Permission Denied",
+                    "Access denied. Please run this application as Administrator to control the service.", MessageBoxIcon.Error);
             }
             catch (System.TimeoutException)
             {
-                MessageBox.Show("Service stop operation timed out. Please check the service manually.",
-                    "Timeout", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return new ServiceActionResult("Timeout",
+                    "Service stop operation timed out. Please check the service manually.", MessageBoxIcon.Warning);
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Error stopping service: {ex.Message}",
-                    "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return new ServiceActionResult("Error", $"Error stopping service: {ex.Message}", MessageBoxIcon.Error);
             }
         }
     }
