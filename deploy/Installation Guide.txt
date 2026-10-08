@@ -5,6 +5,9 @@ PRE REQUISITE
 Inside Lottery Display App in Store Setting:
 - Please put "Pos Lottery Dept ID" And "Pos Payout Dept ID"
 
+(The desktop app refuses to log in while "Pos Lottery Dept ID" is empty,
+ because the background service would ignore every sale without it.)
+
 ----------------------------------------------------
 STEP 1 - DOWNLOAD LOTTERYDISPLAYPOS
 ----------------------------------------------------
@@ -22,32 +25,40 @@ STEP 2 - EXTRACT FILES
 - Final folder path should be: "C:\ProgramData\LotteryDisplayPos"
 
 ----------------------------------------------------
-STEP 3 - RUN Disable-RunExeAsAdmin.bat
-----------------------------------------------------
-
-1. Open the LotteryDisplayPos folder.
-2. Find: "Disable-RunExeAsAdmin.bat"
-3. Right-click the file.
-4. Hit: Run as Administrator
-
-----------------------------------------------------
-STEP 4 - INSTALL WINDOWS SERVICE
+STEP 3 - INSTALL WINDOWS SERVICE
 ----------------------------------------------------
 
 1. Find: Install-WindowService.bat
+   (if there is also a file starting with "updated-", use that one)
 2. Right-click the file.
 3. Hit: Run as Administrator
 
-This gonna install the Windows Service.
+This installs the Windows Service and configures it to restart itself
+if it ever crashes. The service is not started yet; the app starts it
+in step 7.
 
 ----------------------------------------------------
-STEP 5 - RUN LdPosService.exe
+STEP 4 - RUN Update-Disable-RunExeAsAdmin.bat
 ----------------------------------------------------
 
-1. Open the folder: LdPosService
-2. Find: LdPosService.exe
+1. Stay logged in as the Windows user who will use the app
+   (this user must be an administrator).
+2. Find: "Update-Disable-RunExeAsAdmin.bat"
 3. Right-click the file.
 4. Hit: Run as Administrator
+
+This creates a "Lottery Display POS" shortcut on the desktop that opens
+the app with administrator rights but without a UAC prompt.
+It does NOT turn off UAC on the PC (the old Disable-RunExeAsAdmin.bat
+did; this script also puts that setting back to normal).
+
+----------------------------------------------------
+STEP 5 - OPEN THE APP
+----------------------------------------------------
+
+1. Double-click the "Lottery Display POS" shortcut on the desktop.
+   (Do not right-click LdPosService.exe and "Run as administrator";
+    the shortcut does that for you.)
 
 ----------------------------------------------------
 STEP 6 - INSTALL .NET 8 DESKTOP RUNTIME (IF NEEDED)
@@ -58,7 +69,7 @@ If the app asks for .NET 8 Desktop Runtime:
 Download from Microsoft:
 https://dotnet.microsoft.com/en-us/download/dotnet/8.0
 
-Install the runtime and restart the app.
+Install the runtime and open the app again.
 
 ----------------------------------------------------
 STEP 7 - LOGIN USING BARCODE
@@ -68,8 +79,10 @@ STEP 7 - LOGIN USING BARCODE
 2. Copy your user barcode.
    Example: LDSS.430.06107801
 
-3. Paste the barcode into the desktop app:
-   LdPosService.exe
+3. Paste the barcode into the desktop app and press Login.
+
+If the app says "Store Not Configured", go back to the PRE REQUISITE,
+set "Pos Lottery Dept ID" in Store Settings, and log in again.
 
 ----------------------------------------------------
 STEP 8 - SELECT XML GATEWAY BOOUTBOX FOLDER
@@ -80,6 +93,10 @@ STEP 8 - SELECT XML GATEWAY BOOUTBOX FOLDER
 3. Go to your XML Gateway directory.
 4. Pick the folder: BoOutBox
 
+Use the network path (\\10.5.48.2\...). If you pick a mapped drive
+letter such as Z:, the app converts it to the network path itself and
+shows the path the service will use.
+
 ----------------------------------------------------
 STEP 9 - VERIFY SERVICE CONNECTION
 ----------------------------------------------------
@@ -88,5 +105,10 @@ After selecting the BoOutBox folder:
 
 - A popup should show up saying
   the Windows Service started successfully.
+- The app window shows "Store <id>, Lottery Dept <id>" next to Welcome;
+  the Lottery Dept must not be 0.
 - You can close the setup window now.
 - Test the integration by selling tickets.
+
+Service log, if support asks for it:
+  C:\ProgramData\LdPosService\logs\service-YYYYMMDD.log
