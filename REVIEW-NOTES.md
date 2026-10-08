@@ -25,8 +25,8 @@ Yeh file har review point ka masla, discussion, faisla aur status rakhti hai. Ha
 | 9 | Service mein Console.WriteLine | Darmiyana | DONE | 082929d |
 | 10 | Login JSON haath se jora hua | Darmiyana | DONE (9 ke saath) | 082929d |
 | 11 | Retry comment aur code alag | Darmiyana | DONE | 629989f |
-| 12 | Nested form chain | Chhota | PENDING | |
-| 13 | UI freeze, WaitForStatus UI thread pe | Chhota | PENDING | |
+| 12 | Nested form chain | Chhota | DONE | 1e66265 |
+| 13 | UI freeze, WaitForStatus UI thread pe | Chhota | DONE | 1e66265 |
 | 14 | UNC path pe sync Directory.Exists | **Bara** (client logs: 12-16 minute block) | DONE | 7190a87 |
 | 15 | Dead code aur faltu saaman | Chhota | DONE | 6e49536 |
 | 16 | Server ka reject (4xx) aur network fail ek jaise treat; point 1 ke baad rejected row queue block kar sakti hai | Bara | CHOR DO (server 200 deta hai) | - |
@@ -218,11 +218,22 @@ Pehli line: process crash ho to Windows 5s, 10s, 30s baad wapas chalaye, 24 ghan
 
 **Fix idea:** Ek main form jo panels switch kare, ya logout pe Dashboard close kar ke `Application.Restart()`.
 
+**DONE (2026-10-08, commit 1e66265, point 13 ke saath):** `Application.Restart()` ki jagah saaf tareeqa. `LoginForm.ShowDashboard` (LoginForm.cs line 129) Dashboard ko modal kholta hai aur uska `DialogResult` dekhta hai: logout pe Dashboard `DialogResult.Retry` ke saath band hota hai (DashboardForm.cs line 56), LoginForm UUID box saaf kar ke khud ko wapas dikha deta hai, Dashboard dispose. X se band kiya to pehle jaisa app exit. Ab har logout/login cycle pe ek hi LoginForm aur ek hi Dashboard, stack pe kuch jama nahi hota. Dono jagah (login aur auto-login) wahi helper.
+
 ### 13. UI freeze, WaitForStatus UI thread pe — PENDING
 
 **Masla:** `DashboardForm.cs:113` se 143 tak `WaitForStatus` UI thread pe, har ek 10 second tak. Browse Folder ke baad app 10 se 20 second jam.
 
 **Fix idea:** Service control `Task.Run` mein, button disable, await.
+
+**DONE (2026-10-08, commit 1e66265, point 12 ke saath), sab `DashboardForm.cs` mein:**
+- `StartOrRestartWindowsService` aur `StopWindowsService` ab `ServiceActionResult` (title, message, icon) return karte hain, andar koi MessageBox nahi. Background thread se MessageBox nahi dikhana chahiye, isliye.
+- `RunServiceActionAsync` (line 199): `SetBusy(true)` (dono buttons disable, wait cursor, label pe "Restarting the service, please wait..."), `await Task.Run(action)`, phir UI thread pe `MessageBox.Show(this, ...)`, finally `SetBusy(false)`.
+- Browse Folder aur Logout dono handlers `async`, isi helper se. Window ab kabhi "(Not Responding)" nahi hoti, user ko status dikhta hai, aur beech mein app maarne ka khayal nahi aata (jo service ko stopped chhod deta tha).
+- Stop timeout 10 se 30 second (`StopTimeout`), kyunke service ka host upload beech mein ho to 30 second tak le sakta hai; start 15 second (`StartTimeout`). Purane 10 second mein jhoota "timed out" aa sakta tha.
+- Ek chhota sa extra: service kisi aur state mein ho (Paused waghera) to pehle chup chaap kuch nahi hota tha, ab message "Service is in state X. Nothing was changed".
+
+**Test nahi hua yahan:** service control ke liye asli service chahiye; dev machine pe nahi chalaya. Store pe Browse Folder dabao, label pe "Restarting the service..." dikhna chahiye aur window hilni chahiye, 3-8 second baad "Service Restarted" ka MessageBox.
 
 ### 14. UNC path pe sync Directory.Exists — PENDING
 
@@ -383,3 +394,4 @@ Moiez ne 2026-10-08 ko teen log files di: `service-20261001.log` (5855 lines), `
 | 7190a87 | 2026-10-08 | Point 14: path check / watcher create / scan listing / copy with timeouts, single in-flight Exists, lock wait by wall clock |
 | 66192af | 2026-10-08 | Point 6: login refused when pos_dept_id is 0 (token released), saved DeptId-0 user removed on start, Dashboard shows store/dept, service logs ERROR |
 | d58099c | 2026-10-08 | Point 19: Update-Disable-RunExeAsAdmin.bat (elevated scheduled task + desktop shortcut, UAC default restored), Installation Guide rewritten |
+| 1e66265 | 2026-10-08 | Points 13 + 12: service control on a worker thread with busy state, logout returns to the login form via DialogResult |
