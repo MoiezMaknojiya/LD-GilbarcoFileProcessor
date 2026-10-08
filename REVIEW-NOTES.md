@@ -19,7 +19,7 @@ Yeh file har review point ka masla, discussion, faisla aur status rakhti hai. Ha
 | 3 | POS folder ki originals kabhi delete nahi, restart pe sab dobara process | Bara | CHOR DO (dekho point 16) | - |
 | 4 | Watcher pehli baar fail ho to service hamesha phansi | Bara | DONE | 27b1499, e6e2af5 |
 | 5 | Auto-login token verify nahi karta | Bara | CHOR DO (token kabhi expire nahi hota) | - |
-| 6 | DeptId 0 ka risk | Bara | PENDING | |
+| 6 | DeptId 0 ka risk | Bara | DONE | 66192af |
 | 7 | Network-error break wala code dead tha | Darmiyana | DONE (point 1 ke saath) | 04597f3 |
 | 8 | Watcher sirf Created event sunta hai | Darmiyana | CHOR DO (Gilbarco sirf Created karta hai) | - |
 | 9 | Service mein Console.WriteLine | Darmiyana | DONE | 082929d |
@@ -150,6 +150,14 @@ Pehli line: process crash ho to Windows 5s, 10s, 30s baad wapas chalaye, 24 ghan
 **Fix idea:** Login response mein `pos_dept_id` 0 ya missing ho to login reject ya saaf warning.
 
 **Context (2026-10-06):** Installation Guide ka PRE REQUISITE yehi hai: Lottery Display App ke Store Settings mein "Pos Lottery Dept ID" aur "Pos Payout Dept ID" bharna. Koi bhool jaye to exactly yeh case banta hai, DeptId 0, saari files chup chaap delete. Fix wala warning us bhool ko install ke waqt hi pakad lega.
+
+**Faisla (Moiez, 2026-10-08):** Dashboard na khule, error dikhe, OK pe logout API call ho taake server pe token jama na hon. Dept kabhi 0 nahi hota.
+
+**DONE (2026-10-08, commit 66192af):**
+- `LdPosService/LoginForm.cs`: login success lekin `pos_dept_id` 0 ya missing → "Store Not Configured" message jo batata hai kahan set karna hai (Store Settings → Pos Lottery Dept ID aur Pos Payout Dept ID, phir dobara login aur BOOutBox folder), OK ke baad `LogoutAsync` usi token ke saath, user save nahi, login screen pe wapas. Auto-login pe bhi: purane build se saved user jiska DeptId 0 ho → wahi message, token release, saved user aur transactions delete, login screen.
+- `LdPosService/DashboardForm.cs`: label ab "Welcome, X!   Store 430, Lottery Dept 2". Constructor mein storeId aur deptId wapas aaye (point 15 mein unused the, ab use hain).
+- `LdFileProcessor/FileMonitorService.cs`: user load pe DeptId 0 ho to ERROR line fix ki hidayat ke saath (line 224), aur har file pe Info ki jagah ERROR "Ignoring ...: the saved login has no POS lottery department" (line 685). Files pehle ki tarah process nahi hotin, temp copy delete.
+- Service ko DeptId 0 wale user se chhutkara tab milta hai jab user dobara login kar ke Browse Folder dabaye (service restart). Tab tak log ERROR deta rahega, chup nahi.
 
 ### 7. Network-error break wala code dead tha — DONE (point 1 ke saath)
 
@@ -364,3 +372,4 @@ Moiez ne 2026-10-08 ko teen log files di: `service-20261001.log` (5855 lines), `
 | 629989f | 2026-10-07 | Point 11: lock wait 60 x 500ms = 30s via constants, log text derived from them |
 | 082929d | 2026-10-07 | Point 9 (+10): ILogger in ApiLibrary, HTTP status/body logged on failures, inner exceptions kept, login JSON serialized |
 | 7190a87 | 2026-10-08 | Point 14: path check / watcher create / scan listing / copy with timeouts, single in-flight Exists, lock wait by wall clock |
+| 66192af | 2026-10-08 | Point 6: login refused when pos_dept_id is 0 (token released), saved DeptId-0 user removed on start, Dashboard shows store/dept, service logs ERROR |
